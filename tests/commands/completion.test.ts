@@ -1,3 +1,7 @@
+import { mkdtemp } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -79,6 +83,16 @@ describe('generateCompletionScript', () => {
     expect(generateCompletionScript('zsh', { binaryName: 'add-eks' })).toContain('#compdef add-eks');
     expect(generateCompletionScript('fish', { binaryName: 'add-eks' })).toContain('complete -c add-eks');
   });
+
+  it('uses zsh line splitting for newline-delimited dynamic candidates', () => {
+    const script = generateCompletionScript('zsh', { binaryName: 'add-eks' });
+
+    expect(script).toContain('${(f)"$(add-eks __complete profiles "$words[@]")"}');
+    expect(script).toContain('${(f)"$(add-eks __complete eks-contexts "$words[@]")"}');
+    expect(script).toContain('${(f)"$(add-eks __complete contexts "$words[@]")"}');
+    expect(script).toContain('${(f)"$(add-eks __complete regions "$words[@]")"}');
+    expect(script).toContain('${(f)"$(add-eks __complete clusters "$words[@]")"}');
+  });
 });
 
 describe('completion candidates', () => {
@@ -113,6 +127,17 @@ describe('completion candidates', () => {
 
     expect(regions.slice(0, 2)).toEqual(['ap-northeast-2', 'us-west-2']);
     expect(regions).toContain('us-east-1');
+    expect(regions).toContain('eu-central-1');
+  });
+
+  it('returns common regions when kubeconfig is missing', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'add-eks-completion-'));
+    const missingHome = path.join(root, 'missing-home');
+
+    const regions = await completeCandidates('regions', {}, { home: missingHome });
+
+    expect(regions).toContain('us-east-1');
+    expect(regions).toContain('ap-northeast-2');
     expect(regions).toContain('eu-central-1');
   });
 

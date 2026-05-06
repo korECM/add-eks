@@ -139,7 +139,7 @@ export async function completeCandidates(
       case 'eks-contexts':
         return sortUnique((await readCompletionKubeconfig(args, deps)).eksContexts);
       case 'regions':
-        return completionRegions(await readCompletionKubeconfig(args, deps));
+        return await completeRegions(args, deps);
       case 'clusters':
         return await completeClusters(args, deps);
     }
@@ -215,6 +215,21 @@ async function listClustersForCompletion(input: {
       };
     },
   });
+}
+
+async function completeRegions(
+  args: CompletionArgs,
+  deps: CompletionDeps,
+): Promise<string[]> {
+  try {
+    return completionRegions(await readCompletionKubeconfig(args, deps));
+  } catch {
+    return completionRegions({
+      contexts: [],
+      eksContexts: [],
+      regions: [],
+    });
+  }
 }
 
 interface KubeconfigCompletionData {
@@ -305,10 +320,10 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}() {
   cache_commands=(${CACHE_COMMANDS.join(' ')})
 
   case "$words[CURRENT-1]" in
-    --profile) compadd -- "$(${binaryName} __complete profiles "$words[@]")"; return ;;
-    --context) compadd -- "$(${binaryName} __complete eks-contexts "$words[@]")" "$(${binaryName} __complete contexts "$words[@]")"; return ;;
-    --region) compadd -- "$(${binaryName} __complete regions "$words[@]")"; return ;;
-    --cluster) compadd -- "$(${binaryName} __complete clusters "$words[@]")"; return ;;
+    --profile) compadd -- \${(f)"$(${binaryName} __complete profiles "$words[@]")"}; return ;;
+    --context) compadd -- \${(f)"$(${binaryName} __complete eks-contexts "$words[@]")"} \${(f)"$(${binaryName} __complete contexts "$words[@]")"}; return ;;
+    --region) compadd -- \${(f)"$(${binaryName} __complete regions "$words[@]")"}; return ;;
+    --cluster) compadd -- \${(f)"$(${binaryName} __complete clusters "$words[@]")"}; return ;;
   esac
 
   case "$words[2]" in
