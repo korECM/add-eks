@@ -2,6 +2,8 @@
 import { Command } from 'commander';
 
 import { runCacheClear, runCacheList, runCacheStatus } from './commands/cache.js';
+import { runRestore } from './commands/restore.js';
+import { runRevert } from './commands/revert.js';
 import { runUpdate } from './commands/update.js';
 import { name, version } from './index.js';
 
@@ -49,6 +51,57 @@ program
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`Error: ${message}\n`);
       process.exitCode = 1;
+    }
+  });
+
+program
+  .command('revert')
+  .description('Revert add-eks patched kubeconfig contexts back to aws eks get-token.')
+  .option('--kubeconfig <path>', 'kubeconfig file to update')
+  .option('--context <name>', 'context to revert; can be repeated or comma-separated', collect, [])
+  .option('--all', 'revert all add-eks patched contexts')
+  .option('--backup', 'create a kubeconfig backup before writing', true)
+  .option('--no-backup', 'skip kubeconfig backup creation')
+  .option('--backup-dir <path>', 'directory for kubeconfig backups')
+  .option('--yes', 'confirm non-interactive writes')
+  .option('--dry-run', 'show planned changes without backing up or writing')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: RevertOptions) => {
+    try {
+      const result = await runRevert(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      const prefix = result.dryRun ? 'Would revert' : 'Reverted';
+      process.stdout.write(`${prefix} contexts: ${result.changedContexts.join(', ')}\n`);
+      if (result.backupPath !== undefined) {
+        process.stdout.write(`Backup: ${result.backupPath}\n`);
+      }
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
+program
+  .command('restore')
+  .description('Restore a kubeconfig from an add-eks backup file.')
+  .requiredOption('--backup <path>', 'backup file to restore from')
+  .option('--kubeconfig <path>', 'kubeconfig file to restore')
+  .option('--yes', 'confirm non-interactive restore')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: RestoreOptions) => {
+    try {
+      const result = await runRestore(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      process.stdout.write(`Restored ${result.kubeconfigPath} from ${result.backupPath}\n`);
+    } catch (error) {
+      writeCommandError(error);
     }
   });
 
@@ -147,6 +200,8 @@ cacheCommand
   });
 
 type UpdateOptions = Parameters<typeof runUpdate>[0];
+type RevertOptions = Parameters<typeof runRevert>[0];
+type RestoreOptions = Parameters<typeof runRestore>[0];
 type CacheOptions = Parameters<typeof runCacheList>[0];
 type CacheEntry = Awaited<ReturnType<typeof runCacheList>>['entries'][number];
 
