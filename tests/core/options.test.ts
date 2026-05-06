@@ -67,6 +67,32 @@ describe('resolveRuntimeOptions', () => {
   it('uses cache key flag overrides', () => {
     expect(resolveRuntimeOptions({ cacheKey: 'arn' }, home).cacheKey).toBe('arn');
   });
+
+  it.each(['', '   ', 'abc', '1.5', '-1', '0', 'Infinity'])(
+    'throws for invalid safety margin string %j',
+    (safetyMargin) => {
+      expect(() => resolveRuntimeOptions({ safetyMargin }, home)).toThrow(
+        'safetyMargin must be a positive integer',
+      );
+    },
+  );
+
+  it.each([Number.NaN, Infinity, -Infinity, 1.5, -1, 0])(
+    'throws for invalid safety margin number %j',
+    (safetyMargin) => {
+      expect(() => resolveRuntimeOptions({ safetyMargin }, home)).toThrow(
+        'safetyMargin must be a positive integer',
+      );
+    },
+  );
+
+  it('throws for unsupported cache key flag overrides', () => {
+    expect(() =>
+      resolveRuntimeOptions({ cacheKey: 'region' }, home),
+    ).toThrow(
+      'cacheKey must be one of: cluster, cluster-profile, cluster-region-profile, arn',
+    );
+  });
 });
 
 describe('CacheKeyStrategy', () => {
