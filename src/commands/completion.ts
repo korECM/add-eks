@@ -157,7 +157,9 @@ export function parseCompletionArgs(values: string[]): CompletionArgs {
       continue;
     }
 
-    const [flag, inlineValue] = value.split('=', 2);
+    const equalsIndex = value.indexOf('=');
+    const flag = equalsIndex === -1 ? value : value.slice(0, equalsIndex);
+    const inlineValue = equalsIndex === -1 ? undefined : value.slice(equalsIndex + 1);
     const candidateValue = inlineValue ?? values[index + 1];
     const nextValue =
       candidateValue === undefined || candidateValue.startsWith('--') ? undefined : candidateValue;
@@ -273,11 +275,20 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}()
   words=("\${COMP_WORDS[@]}")
   cword=$COMP_CWORD
 
+  __add_eks_complete_dynamic() {
+    local candidate
+    while IFS= read -r candidate; do
+      if [[ $candidate == "$cur"* ]]; then
+        COMPREPLY+=("$candidate")
+      fi
+    done < <("$@")
+  }
+
   case "$prev" in
-    --profile) COMPREPLY=( $(compgen -W "$(${binaryName} __complete profiles "\${words[@]}")" -- "$cur") ); return ;;
-    --context) COMPREPLY=( $(compgen -W "$(${binaryName} __complete eks-contexts "\${words[@]}") $(${binaryName} __complete contexts "\${words[@]}")" -- "$cur") ); return ;;
-    --region) COMPREPLY=( $(compgen -W "$(${binaryName} __complete regions "\${words[@]}")" -- "$cur") ); return ;;
-    --cluster) COMPREPLY=( $(compgen -W "$(${binaryName} __complete clusters "\${words[@]}")" -- "$cur") ); return ;;
+    --profile) __add_eks_complete_dynamic ${binaryName} __complete profiles "\${words[@]}"; return ;;
+    --context) __add_eks_complete_dynamic ${binaryName} __complete eks-contexts "\${words[@]}"; __add_eks_complete_dynamic ${binaryName} __complete contexts "\${words[@]}"; return ;;
+    --region) __add_eks_complete_dynamic ${binaryName} __complete regions "\${words[@]}"; return ;;
+    --cluster) __add_eks_complete_dynamic ${binaryName} __complete clusters "\${words[@]}"; return ;;
   esac
 
   case "\${words[1]}" in
@@ -342,7 +353,7 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}() {
     *) compadd -- $commands ${GLOBAL_FLAGS.join(' ')} ;;
   esac
 }
-_${binaryName.replace(/[^A-Za-z0-9_]/g, '_')} "$@"
+compdef _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')} ${binaryName}
 `;
 }
 

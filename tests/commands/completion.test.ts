@@ -1,6 +1,8 @@
-import { mkdtemp } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +11,21 @@ import {
   generateCompletionScript,
   parseCompletionArgs,
 } from '../../src/commands/completion.js';
+
+const execFileAsync = promisify(execFile);
+
+async function hasCommand(command: string): Promise<boolean> {
+  try {
+    await execFileAsync(command, ['--version']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
 
 function kubeconfigFixture(): string {
   return `
@@ -79,9 +96,39 @@ describe('generateCompletionScript', () => {
     expect(script).toContain('completion');
   });
 
+  it('filters bash dynamic candidates line by line without word splitting candidates', () => {
+    const script = generateCompletionScript('bash', { binaryName: 'add-eks' });
+
+    expect(script).toContain('while IFS= read -r candidate; do');
+    expect(script).toContain('COMPREPLY+=("$candidate")');
+    expect(script).not.toContain('compgen -W "$(');
+  });
+
   it('supports zsh and fish scripts', () => {
     expect(generateCompletionScript('zsh', { binaryName: 'add-eks' })).toContain('#compdef add-eks');
     expect(generateCompletionScript('fish', { binaryName: 'add-eks' })).toContain('complete -c add-eks');
+  });
+
+  it('registers zsh completion without invoking the completion function on source', () => {
+    const script = generateCompletionScript('zsh', { binaryName: 'add-eks' });
+
+    expect(script).toContain('compdef _add_eks add-eks');
+    expect(script.trim()).not.toMatch(/_add_eks "\$@"$/);
+  });
+
+  it('can be sourced by zsh without running compadd outside completion', async () => {
+    if (!(await hasCommand('zsh'))) {
+      return;
+    }
+
+    const root = await mkdtemp(path.join(os.tmpdir(), 'add-eks-zsh-completion-'));
+    const scriptPath = path.join(root, 'completion.zsh');
+    await writeFile(scriptPath, generateCompletionScript('zsh', { binaryName: 'add-eks' }));
+
+    await execFileAsync('zsh', [
+      '-fc',
+      `autoload -Uz compinit && compinit -D && source ${shellQuote(scriptPath)}`,
+    ]);
   });
 
   it('uses zsh line splitting for newline-delimited dynamic candidates', () => {
@@ -195,6 +242,20 @@ describe('completion candidates', () => {
       profile: 'prod',
       region: 'ap-northeast-2',
       kubeconfig: '/tmp/config',
+    });
+  });
+
+  it('preserves inline completion flag values containing equals signs', () => {
+    expect(
+      parseCompletionArgs([
+        '--profile=prod=blue',
+        '--region=ap-northeast-2',
+        '--kubeconfig=/tmp/a=b/config',
+      ]),
+    ).toEqual({
+      profile: 'prod=blue',
+      region: 'ap-northeast-2',
+      kubeconfig: '/tmp/a=b/config',
     });
   });
 });
