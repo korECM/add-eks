@@ -56,7 +56,9 @@ export function planPatch(input: PlanPatchInput): PlanPatchResult {
         : originalUserName,
       cloneUser: userIsShared,
       cluster: detection.cluster,
-      region: detection.region
+      region: detection.region,
+      clusterArn: detection.clusterArn,
+      roleArn: detection.roleArn
     };
   });
 
@@ -85,7 +87,9 @@ export function planPatch(input: PlanPatchInput): PlanPatchResult {
         cacheDir: input.cacheDir,
         safetyMargin: input.safetyMargin,
         cacheKey: input.cacheKey,
-        profile: input.profile
+        profile: input.profile,
+        clusterArn: plan.clusterArn,
+        roleArn: plan.roleArn
       })
     };
 
@@ -172,6 +176,8 @@ function buildExec(input: {
   safetyMargin: number;
   cacheKey: CacheKeyStrategy;
   profile?: string;
+  clusterArn?: string;
+  roleArn?: string;
 }): KubeconfigExec {
   return {
     ...input.existingExec,
@@ -189,6 +195,8 @@ function buildArgs(input: {
   safetyMargin: number;
   cacheKey: CacheKeyStrategy;
   profile?: string;
+  clusterArn?: string;
+  roleArn?: string;
 }): string[] {
   const args = [
     '--cluster',
@@ -205,6 +213,14 @@ function buildArgs(input: {
 
   if (input.profile !== undefined) {
     args.push('--profile', input.profile);
+  }
+
+  if (input.clusterArn !== undefined) {
+    args.push('--cluster-arn', input.clusterArn);
+  }
+
+  if (input.roleArn !== undefined) {
+    args.push('--role-arn', input.roleArn);
   }
 
   return args;

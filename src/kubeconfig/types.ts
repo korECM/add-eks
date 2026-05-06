@@ -56,7 +56,9 @@ export interface EksContextDetection {
   clusterName?: string;
   userName?: string;
   cluster?: string;
+  clusterArn?: string;
   region?: string;
+  roleArn?: string;
   source: 'aws-exec' | 'arn' | 'server';
   reason?: string;
 }

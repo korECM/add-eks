@@ -7,7 +7,9 @@ import type {
 
 interface ClusterAndRegion {
   cluster?: string;
+  clusterArn?: string;
   region?: string;
+  roleArn?: string;
 }
 
 const AWS_REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
@@ -57,7 +59,9 @@ export function findEksContexts(config: Kubeconfig): EksContextDetection[] {
         clusterName,
         userName,
         cluster: awsExec.cluster ?? arn?.cluster,
+        clusterArn: awsExec.clusterArn ?? arn?.clusterArn,
         region: awsExec.region ?? arn?.region,
+        roleArn: awsExec.roleArn,
         source: 'aws-exec',
         reason: 'user exec command matches aws eks get-token'
       });
@@ -71,6 +75,7 @@ export function findEksContexts(config: Kubeconfig): EksContextDetection[] {
         clusterName,
         userName,
         cluster: arn.cluster,
+        clusterArn: arn.clusterArn,
         region: arn.region,
         source: 'arn',
         reason: 'context, cluster, or user name matches an EKS cluster ARN'
@@ -111,9 +116,14 @@ function isAwsCommand(command: string): boolean {
 }
 
 function extractClusterAndRegionFromArgs(args: string[]): ClusterAndRegion {
+  const clusterName = readFlagValue(args, '--cluster-name');
+  const arn = clusterName === undefined ? undefined : parseEksClusterArn(clusterName);
+
   return {
-    cluster: readFlagValue(args, '--cluster-name'),
-    region: readFlagValue(args, '--region')
+    cluster: arn?.cluster ?? clusterName,
+    clusterArn: arn?.clusterArn,
+    region: readFlagValue(args, '--region') ?? arn?.region,
+    roleArn: readFlagValue(args, '--role-arn')
   };
 }
 
@@ -223,6 +233,7 @@ function parseEksClusterArn(name: string): ClusterAndRegion | undefined {
 
   return {
     region,
+    clusterArn: name,
     cluster: resourceParts[1]
   };
 }

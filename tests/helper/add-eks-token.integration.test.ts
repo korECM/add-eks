@@ -63,6 +63,11 @@ function testEnv(input: { binDir: string; callsPath: string; debug?: boolean }):
   return {
     ...process.env,
     ADD_EKS_DEBUG: input.debug === false ? '' : '1',
+    AWS_ACCESS_KEY_ID: '',
+    AWS_DEFAULT_PROFILE: '',
+    AWS_PROFILE: '',
+    AWS_ROLE_ARN: '',
+    AWS_WEB_IDENTITY_TOKEN_FILE: '',
     AWS_CALL_COUNT: input.callsPath,
     PATH: `${input.binDir}${path.delimiter}${process.env.PATH ?? ''}`,
   };
@@ -205,6 +210,47 @@ describe('add-eks-token POSIX helper', () => {
     });
     const third = await execFileAsync('/bin/sh', [helperPath.pathname, ...roleOneArgs], {
       env,
+    });
+
+    expect(JSON.parse(first.stdout).status.token).toBe('token-1');
+    expect(JSON.parse(second.stdout).status.token).toBe('token-2');
+    expect(JSON.parse(third.stdout).status.token).toBe('token-1');
+    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
+  });
+
+  it('keeps omitted profile cache identity isolated by ambient AWS_PROFILE', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({
+      binDir,
+      callsPath,
+      expectedArgs: 'eks get-token --cluster-name dev --region us-west-2',
+    });
+
+    const args = [
+      '--cluster',
+      'dev',
+      '--region',
+      'us-west-2',
+      '--cache-dir',
+      cacheDir,
+      '--safety-margin',
+      '60',
+      '--cache-key',
+      'cluster-region-profile',
+    ];
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], {
+      env: { ...testEnv({ binDir, callsPath }), AWS_PROFILE: 'alpha' },
+    });
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], {
+      env: { ...testEnv({ binDir, callsPath }), AWS_PROFILE: 'beta' },
+    });
+    const third = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], {
+      env: { ...testEnv({ binDir, callsPath }), AWS_PROFILE: 'alpha' },
     });
 
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');

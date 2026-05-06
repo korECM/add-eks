@@ -165,7 +165,9 @@ users:
         '--safety-margin',
         '90',
         '--cache-key',
-        'cluster-region-profile'
+        'cluster-region-profile',
+        '--cluster-arn',
+        'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod'
       ],
       interactiveMode: 'Never'
     });
@@ -194,7 +196,91 @@ users:
       '--cache-key',
       'cluster-region-profile',
       '--profile',
-      'work'
+      'work',
+      '--cluster-arn',
+      'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod'
+    ]);
+  });
+
+  it('passes detected cluster ARN material for arn cache keys', () => {
+    const result = planPatch({
+      config: loadFixture(),
+      contexts: ['prod'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'arn'
+    });
+
+    expect(result.config.users?.[0]?.user?.exec?.args).toEqual([
+      '--cluster',
+      'prod',
+      '--region',
+      'ap-northeast-2',
+      '--cache-dir',
+      '/tmp/add-eks-cache',
+      '--safety-margin',
+      '90',
+      '--cache-key',
+      'arn',
+      '--cluster-arn',
+      'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod'
+    ]);
+  });
+
+  it('preserves detected aws exec role ARN when patching', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:us-west-2:123456789012:cluster/stage
+    cluster:
+      server: https://stage.gr7.us-west-2.eks.amazonaws.com
+contexts:
+  - name: stage
+    context:
+      cluster: arn:aws:eks:us-west-2:123456789012:cluster/stage
+      user: stage-user
+users:
+  - name: stage-user
+    user:
+      exec:
+        command: aws
+        args:
+          - eks
+          - get-token
+          - --cluster-name
+          - stage
+          - --region
+          - us-west-2
+          - --role-arn
+          - arn:aws:iam::123456789012:role/stage-reader
+`);
+
+    const result = planPatch({
+      config,
+      contexts: ['stage'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'cluster-region-profile'
+    });
+
+    expect(result.config.users?.[0]?.user?.exec?.args).toEqual([
+      '--cluster',
+      'stage',
+      '--region',
+      'us-west-2',
+      '--cache-dir',
+      '/tmp/add-eks-cache',
+      '--safety-margin',
+      '90',
+      '--cache-key',
+      'cluster-region-profile',
+      '--cluster-arn',
+      'arn:aws:eks:us-west-2:123456789012:cluster/stage',
+      '--role-arn',
+      'arn:aws:iam::123456789012:role/stage-reader'
     ]);
   });
 
@@ -324,7 +410,9 @@ users:
       '--safety-margin',
       '90',
       '--cache-key',
-      'cluster-region-profile'
+      'cluster-region-profile',
+      '--cluster-arn',
+      'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod'
     ]);
     expect(
       result.config.users?.find((entry) => entry.name === 'shared-user:add-eks:stage')?.user?.exec
@@ -339,7 +427,9 @@ users:
       '--safety-margin',
       '90',
       '--cache-key',
-      'cluster-region-profile'
+      'cluster-region-profile',
+      '--cluster-arn',
+      'arn:aws:eks:us-west-2:123456789012:cluster/stage'
     ]);
   });
 

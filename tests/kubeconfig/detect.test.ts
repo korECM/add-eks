@@ -19,6 +19,7 @@ describe('findEksContexts', () => {
       clusterName: 'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod',
       userName: 'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod',
       cluster: 'prod',
+      clusterArn: 'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod',
       region: 'ap-northeast-2',
       source: 'aws-exec'
     });
@@ -48,6 +49,7 @@ users:
           - get-token
           - --cluster-name=staging
           - --region=us-west-2
+          - --role-arn=arn:aws:iam::123456789012:role/reader
         interactiveMode: Never
 `);
 
@@ -58,6 +60,7 @@ users:
         userName: 'staging-user',
         cluster: 'staging',
         region: 'us-west-2',
+        roleArn: 'arn:aws:iam::123456789012:role/reader',
         source: 'aws-exec'
       })
     ]);
@@ -122,6 +125,7 @@ users:
       expect.objectContaining({
         contextName: 'gov',
         cluster: 'gov-prod',
+        clusterArn: 'arn:aws-us-gov:eks:us-gov-west-1:123456789012:cluster/gov-prod',
         region: 'us-gov-west-1',
         source: 'arn'
       })

@@ -79,16 +79,26 @@ timestamp_epoch() {
   printf '%s\n' "$epoch"
 }
 
+profile_cache_label() {
+  if [ "${profile:-}" != "" ]; then
+    printf '%s' "$profile"
+  else
+    printf 'ambient'
+  fi
+}
+
 cache_key_value() {
+  profile_label=$(profile_cache_label)
+
   case "$cache_key" in
     cluster)
       printf '%s' "$cluster"
       ;;
     cluster-profile)
-      printf '%s__%s' "$cluster" "${profile:-default}"
+      printf '%s__%s' "$cluster" "$profile_label"
       ;;
     cluster-region-profile)
-      printf '%s__%s__%s' "$cluster" "$region" "${profile:-default}"
+      printf '%s__%s__%s' "$cluster" "$region" "$profile_label"
       ;;
     arn)
       if [ "${arn:-}" != "" ]; then
@@ -98,16 +108,49 @@ cache_key_value() {
           arn:*) printf '%s' "$cluster" ;;
           *)
             debug 'cache key arn requested without arn value; using cluster-region-profile'
-            printf '%s__%s__%s' "$cluster" "$region" "${profile:-default}"
+            printf '%s__%s__%s' "$cluster" "$region" "$profile_label"
             ;;
         esac
       fi
       ;;
     *)
       debug "unsupported cache key '$cache_key'; using cluster-region-profile"
-      printf '%s__%s__%s' "$cluster" "$region" "${profile:-default}"
+      printf '%s__%s__%s' "$cluster" "$region" "$profile_label"
       ;;
   esac
+}
+
+write_profile_identity_material() {
+  if [ "${profile:-}" != "" ]; then
+    printf 'profile=%s\n' "$profile"
+    return
+  fi
+
+  found=0
+  if [ "${AWS_PROFILE:-}" != "" ]; then
+    printf 'env_AWS_PROFILE=%s\n' "$AWS_PROFILE"
+    found=1
+  fi
+  if [ "${AWS_DEFAULT_PROFILE:-}" != "" ]; then
+    printf 'env_AWS_DEFAULT_PROFILE=%s\n' "$AWS_DEFAULT_PROFILE"
+    found=1
+  fi
+  if [ "${AWS_ACCESS_KEY_ID:-}" != "" ]; then
+    printf 'env_AWS_ACCESS_KEY_ID=%s\n' "$AWS_ACCESS_KEY_ID"
+    found=1
+  fi
+  if [ "${AWS_ROLE_ARN:-}" != "" ]; then
+    printf 'env_AWS_ROLE_ARN=%s\n' "$AWS_ROLE_ARN"
+    found=1
+  fi
+  if [ "${AWS_WEB_IDENTITY_TOKEN_FILE:-}" != "" ]; then
+    printf 'env_AWS_WEB_IDENTITY_TOKEN_FILE=%s\n' "$AWS_WEB_IDENTITY_TOKEN_FILE"
+    found=1
+  fi
+
+  if [ "$found" -eq 0 ]; then
+    printf 'ambient=none\n'
+  fi
 }
 
 cache_key_material() {
@@ -115,6 +158,7 @@ cache_key_material() {
 
   printf 'strategy=%s\n' "$cache_key"
   printf 'value=%s\n' "$key_value"
+  write_profile_identity_material
   printf 'role_arn=%s\n' "${role_arn:-}"
 }
 
