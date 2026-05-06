@@ -103,6 +103,44 @@ users:
     ]);
   });
 
+  it('omits clusterArn when aws exec cluster and region do not match ARN names', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+    cluster:
+      server: https://example.com
+contexts:
+  - name: prod-context
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+      user: prod-user
+users:
+  - name: prod-user
+    user:
+      exec:
+        command: aws
+        args:
+          - eks
+          - get-token
+          - --cluster-name
+          - stage
+          - --region
+          - us-west-2
+`);
+
+    const [detected] = findEksContexts(config);
+
+    expect(detected).toMatchObject({
+      contextName: 'prod-context',
+      cluster: 'stage',
+      region: 'us-west-2',
+      source: 'aws-exec'
+    });
+    expect(detected?.clusterArn).toBeUndefined();
+  });
+
   it('detects GovCloud EKS cluster ARNs', () => {
     const config = parseKubeconfig(`
 apiVersion: v1

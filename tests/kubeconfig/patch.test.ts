@@ -284,6 +284,56 @@ users:
     ]);
   });
 
+  it('does not pass cluster ARN when aws exec args do not match ARN names', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+    cluster:
+      server: https://prod.gr7.ap-northeast-2.eks.amazonaws.com
+contexts:
+  - name: prod
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+      user: prod-user
+users:
+  - name: prod-user
+    user:
+      exec:
+        command: aws
+        args:
+          - eks
+          - get-token
+          - --cluster-name
+          - stage
+          - --region
+          - us-west-2
+`);
+
+    const result = planPatch({
+      config,
+      contexts: ['prod'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'arn'
+    });
+
+    expect(result.config.users?.[0]?.user?.exec?.args).toEqual([
+      '--cluster',
+      'stage',
+      '--region',
+      'us-west-2',
+      '--cache-dir',
+      '/tmp/add-eks-cache',
+      '--safety-margin',
+      '90',
+      '--cache-key',
+      'arn'
+    ]);
+  });
+
   it('keeps an unselected context bound to the original shared user', () => {
     const config = parseKubeconfig(`
 apiVersion: v1

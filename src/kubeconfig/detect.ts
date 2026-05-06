@@ -54,12 +54,13 @@ export function findEksContexts(config: Kubeconfig): EksContextDetection[] {
     const awsExec = detectAwsEksGetToken(userEntry?.user?.exec);
     if (awsExec !== undefined) {
       const arn = findArnDetails(userName, contextName, clusterName);
+      const matchingArn = findMatchingArnDetails(awsExec, arn);
       results.push({
         contextName,
         clusterName,
         userName,
         cluster: awsExec.cluster ?? arn?.cluster,
-        clusterArn: awsExec.clusterArn ?? arn?.clusterArn,
+        clusterArn: awsExec.clusterArn ?? matchingArn?.clusterArn,
         region: awsExec.region ?? arn?.region,
         roleArn: awsExec.roleArn,
         source: 'aws-exec',
@@ -206,6 +207,25 @@ function findArnDetails(...names: Array<string | undefined>): ClusterAndRegion |
   }
 
   return undefined;
+}
+
+function findMatchingArnDetails(
+  awsExec: ClusterAndRegion,
+  arn: ClusterAndRegion | undefined
+): ClusterAndRegion | undefined {
+  if (arn === undefined) {
+    return undefined;
+  }
+
+  if (awsExec.cluster !== undefined && awsExec.cluster !== arn.cluster) {
+    return undefined;
+  }
+
+  if (awsExec.region !== undefined && awsExec.region !== arn.region) {
+    return undefined;
+  }
+
+  return arn;
 }
 
 function parseEksClusterArn(name: string): ClusterAndRegion | undefined {

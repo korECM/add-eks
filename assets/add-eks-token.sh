@@ -123,7 +123,8 @@ cache_key_value() {
 write_profile_identity_material() {
   if [ "${profile:-}" != "" ]; then
     printf 'profile=%s\n' "$profile"
-    return
+  else
+    printf 'profile=ambient\n'
   fi
 
   found=0
@@ -133,6 +134,14 @@ write_profile_identity_material() {
   fi
   if [ "${AWS_DEFAULT_PROFILE:-}" != "" ]; then
     printf 'env_AWS_DEFAULT_PROFILE=%s\n' "$AWS_DEFAULT_PROFILE"
+    found=1
+  fi
+  if [ "${AWS_SHARED_CREDENTIALS_FILE:-}" != "" ]; then
+    printf 'env_AWS_SHARED_CREDENTIALS_FILE=%s\n' "$AWS_SHARED_CREDENTIALS_FILE"
+    found=1
+  fi
+  if [ "${AWS_CONFIG_FILE:-}" != "" ]; then
+    printf 'env_AWS_CONFIG_FILE=%s\n' "$AWS_CONFIG_FILE"
     found=1
   fi
   if [ "${AWS_ACCESS_KEY_ID:-}" != "" ]; then
@@ -148,7 +157,7 @@ write_profile_identity_material() {
     found=1
   fi
 
-  if [ "$found" -eq 0 ]; then
+  if [ "$found" -eq 0 ] && [ "${profile:-}" = "" ]; then
     printf 'ambient=none\n'
   fi
 }
