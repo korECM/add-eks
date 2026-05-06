@@ -112,6 +112,108 @@ describe('runRevert', () => {
     });
   });
 
+  it('does not revert an unselected context sharing the same helper user', async () => {
+    const root = await tempDir();
+    const kubeconfig = await writeFixture(root, `
+apiVersion: v1
+kind: Config
+contexts:
+  - name: prod
+    context:
+      cluster: prod
+      user: shared-user
+  - name: dev
+    context:
+      cluster: dev
+      user: shared-user
+users:
+  - name: shared-user
+    user:
+      exec:
+        command: /tmp/add-eks-token
+        args:
+          - --cluster
+          - prod
+          - --region
+          - ap-northeast-2
+          - --cache-dir
+          - /tmp/add-eks-cache
+          - --safety-margin
+          - "90"
+          - --cache-key
+          - cluster-region-profile
+`);
+
+    const result = await runRevert({
+      kubeconfig,
+      context: ['prod'],
+      backup: false,
+      yes: true,
+    }, { home: root });
+
+    const config = parseKubeconfig(await readFile(kubeconfig, 'utf8'));
+    const prodUserName = config.contexts?.find((entry) => entry.name === 'prod')?.context?.user;
+    const devUserName = config.contexts?.find((entry) => entry.name === 'dev')?.context?.user;
+    const prodExec = config.users?.find((entry) => entry.name === prodUserName)?.user?.exec;
+    const devExec = config.users?.find((entry) => entry.name === devUserName)?.user?.exec;
+
+    expect(result.changedContexts).toEqual(['prod']);
+    expect(prodUserName).not.toBe('shared-user');
+    expect(devUserName).toBe('shared-user');
+    expect(prodExec?.command).toBe('aws');
+    expect(devExec?.command).toBe('/tmp/add-eks-token');
+  });
+
+  it('reverts all selected contexts sharing one helper user without order-dependent failure', async () => {
+    const root = await tempDir();
+    const kubeconfig = await writeFixture(root, `
+apiVersion: v1
+kind: Config
+contexts:
+  - name: prod
+    context:
+      cluster: prod
+      user: shared-user
+  - name: dev
+    context:
+      cluster: dev
+      user: shared-user
+users:
+  - name: shared-user
+    user:
+      exec:
+        command: /tmp/add-eks-token
+        args:
+          - --cluster
+          - prod
+          - --region
+          - ap-northeast-2
+          - --cache-dir
+          - /tmp/add-eks-cache
+          - --safety-margin
+          - "90"
+          - --cache-key
+          - cluster-region-profile
+`);
+
+    const result = await runRevert({
+      kubeconfig,
+      all: true,
+      backup: false,
+      yes: true,
+    }, { home: root });
+
+    const config = parseKubeconfig(await readFile(kubeconfig, 'utf8'));
+
+    expect(result.changedContexts).toEqual(['prod', 'dev']);
+    expect(config.contexts?.map((entry) => entry.context?.user)).toEqual([
+      'shared-user',
+      'shared-user',
+    ]);
+    expect(config.users).toHaveLength(1);
+    expect(config.users?.[0]?.user?.exec?.command).toBe('aws');
+  });
+
   it('throws clearly for unknown contexts', async () => {
     const root = await tempDir();
     const kubeconfig = await writeFixture(root);

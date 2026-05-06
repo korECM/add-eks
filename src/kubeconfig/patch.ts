@@ -132,24 +132,25 @@ export function planRevert(input: PlanRevertInput): PlanRevertResult {
   const originalContexts = new Map(
     (input.config.contexts ?? []).map((entry) => [entry.name, entry] as const)
   );
-  const config = structuredClone(input.config);
-  const contexts = new Map((config.contexts ?? []).map((entry) => [entry.name, entry] as const));
-  const users = new Map((config.users ?? []).map((entry) => [entry.name, entry] as const));
-  const changedContexts: string[] = [];
+  const originalUsers = new Map((input.config.users ?? []).map((entry) => [entry.name, entry] as const));
+  const userReferenceCounts = countUserReferences(input.config);
+  const selectedCountsByUserName = new Map<string, number>();
+  const usedUserNames = collectReservedUserNames(input.config);
 
-  for (const contextName of selectedContextNames) {
-    if (!originalContexts.has(contextName)) {
+  const revertPlans = selectedContextNames.map((contextName) => {
+    const contextEntry = originalContexts.get(contextName);
+    if (contextEntry === undefined) {
       throw new Error(`Selected context '${contextName}' does not exist`);
     }
 
-    const userName = contexts.get(contextName)?.context?.user;
-    if (userName === undefined) {
+    const originalUserName = contextEntry.context?.user;
+    if (originalUserName === undefined) {
       throw new Error(`Selected context '${contextName}' does not specify a user to revert`);
     }
 
-    const userEntry = users.get(userName);
+    const userEntry = originalUsers.get(originalUserName);
     if (userEntry === undefined) {
-      throw new Error(`Selected context '${contextName}' references missing user '${userName}'`);
+      throw new Error(`Selected context '${contextName}' references missing user '${originalUserName}'`);
     }
 
     const helperArgs = parseAddEksHelperExec(userEntry.user?.exec);
@@ -157,11 +158,77 @@ export function planRevert(input: PlanRevertInput): PlanRevertResult {
       throw new Error(`Selected context '${contextName}' is not an add-eks patched context`);
     }
 
-    userEntry.user = {
-      ...(userEntry.user ?? {}),
-      exec: buildAwsExec(userEntry.user?.exec, helperArgs)
+    selectedCountsByUserName.set(
+      originalUserName,
+      (selectedCountsByUserName.get(originalUserName) ?? 0) + 1
+    );
+
+    return {
+      contextName,
+      originalUserName,
+      userEntry,
+      helperArgs
     };
-    changedContexts.push(contextName);
+  });
+
+  const targetUserNamesByOriginalUserName = new Map<string, string>();
+  for (const plan of revertPlans) {
+    const userIsSharedWithUnselectedContext =
+      (userReferenceCounts.get(plan.originalUserName) ?? 0) >
+      (selectedCountsByUserName.get(plan.originalUserName) ?? 0);
+
+    if (userIsSharedWithUnselectedContext && !targetUserNamesByOriginalUserName.has(plan.originalUserName)) {
+      targetUserNamesByOriginalUserName.set(
+        plan.originalUserName,
+        reserveRevertedUserName(usedUserNames, plan.originalUserName, plan.contextName)
+      );
+    }
+  }
+
+  const config = structuredClone(input.config);
+  const contexts = new Map((config.contexts ?? []).map((entry) => [entry.name, entry] as const));
+  const users = new Map((config.users ?? []).map((entry) => [entry.name, entry] as const));
+  const changedContexts: string[] = [];
+  const revertedUsers = new Set<string>();
+
+  for (const plan of revertPlans) {
+    const targetUserName = targetUserNamesByOriginalUserName.get(plan.originalUserName);
+    if (targetUserName !== undefined) {
+      const contextEntry = contexts.get(plan.contextName);
+      if (contextEntry?.context === undefined) {
+        throw new Error(`Selected context '${plan.contextName}' does not specify revertable details`);
+      }
+
+      contextEntry.context.user = targetUserName;
+      if (!revertedUsers.has(targetUserName)) {
+        const clonedUserEntry = {
+          ...plan.userEntry,
+          name: targetUserName,
+          user: {
+            ...(plan.userEntry.user ?? {}),
+            exec: buildAwsExec(plan.userEntry.user?.exec, plan.helperArgs)
+          }
+        };
+        config.users = [...(config.users ?? []), clonedUserEntry];
+        users.set(targetUserName, clonedUserEntry);
+        revertedUsers.add(targetUserName);
+      }
+    } else if (!revertedUsers.has(plan.originalUserName)) {
+      const userEntry = users.get(plan.originalUserName);
+      if (userEntry === undefined) {
+        throw new Error(
+          `Selected context '${plan.contextName}' references missing user '${plan.originalUserName}'`
+        );
+      }
+
+      userEntry.user = {
+        ...(userEntry.user ?? {}),
+        exec: buildAwsExec(plan.userEntry.user?.exec, plan.helperArgs)
+      };
+      revertedUsers.add(plan.originalUserName);
+    }
+
+    changedContexts.push(plan.contextName);
   }
 
   return { config, changedContexts };
@@ -214,6 +281,24 @@ function reservePatchedUserName(
   contextName: string
 ): string {
   const baseName = `${originalUserName}:add-eks:${contextName}`;
+  let candidate = baseName;
+  let suffix = 2;
+
+  while (usedUserNames.has(candidate)) {
+    candidate = `${baseName}:${suffix}`;
+    suffix += 1;
+  }
+
+  usedUserNames.add(candidate);
+  return candidate;
+}
+
+function reserveRevertedUserName(
+  usedUserNames: Set<string>,
+  originalUserName: string,
+  contextName: string
+): string {
+  const baseName = `${originalUserName}:aws:${contextName}`;
   let candidate = baseName;
   let suffix = 2;
 

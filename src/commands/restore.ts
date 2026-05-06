@@ -19,7 +19,15 @@ export interface RestoreResult {
 
 export interface RestoreDeps {
   home?: string;
-  restoreBackup?: (input: { backupPath: string; kubeconfigPath: string }) => Promise<void>;
+  readFile?: (filePath: string, encoding: BufferEncoding) => Promise<string>;
+  writeFileAtomic?: (filePath: string, contents: string) => Promise<void>;
+  restoreBackup?: (
+    input: { backupPath: string; kubeconfigPath: string },
+    deps?: {
+      readFile?: (filePath: string, encoding: BufferEncoding) => Promise<string>;
+      writeFileAtomic?: (filePath: string, contents: string) => Promise<void>;
+    },
+  ) => Promise<void>;
 }
 
 export async function runRestore(
@@ -38,7 +46,13 @@ export async function runRestore(
   const backupPath = resolvePath(options.backup, home);
   const kubeconfigPath = resolvePath(options.kubeconfig ?? defaultPaths(home).kubeconfig, home);
 
-  await (deps.restoreBackup ?? restoreBackup)({ backupPath, kubeconfigPath });
+  await (deps.restoreBackup ?? restoreBackup)(
+    { backupPath, kubeconfigPath },
+    {
+      readFile: deps.readFile,
+      writeFileAtomic: deps.writeFileAtomic,
+    },
+  );
 
   return {
     backupPath,

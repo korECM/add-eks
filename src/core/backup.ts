@@ -1,6 +1,8 @@
 import { constants } from 'node:fs';
-import { copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { writeFileAtomic as defaultWriteFileAtomic } from './file.js';
 
 export interface CreateBackupInput {
   kubeconfigPath: string;
@@ -19,6 +21,11 @@ export interface CreateBackupResult {
 export interface RestoreBackupInput {
   backupPath: string;
   kubeconfigPath: string;
+}
+
+export interface RestoreBackupDeps {
+  readFile?: (filePath: string, encoding: BufferEncoding) => Promise<string>;
+  writeFileAtomic?: (filePath: string, contents: string) => Promise<void>;
 }
 
 interface BackupMetadata {
@@ -78,8 +85,12 @@ export async function createBackup(
   }
 }
 
-export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
-  await copyFile(input.backupPath, input.kubeconfigPath);
+export async function restoreBackup(
+  input: RestoreBackupInput,
+  deps: RestoreBackupDeps = {},
+): Promise<void> {
+  const contents = await (deps.readFile ?? readFile)(input.backupPath, 'utf8');
+  await (deps.writeFileAtomic ?? defaultWriteFileAtomic)(input.kubeconfigPath, contents);
 }
 
 function backupFileName(

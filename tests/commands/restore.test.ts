@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { runRestore } from '../../src/commands/restore.js';
 
@@ -32,6 +32,30 @@ describe('runRestore', () => {
     });
     await expect(readFile(kubeconfigPath, 'utf8')).resolves.toBe(
       'users:\n  - name: original\n',
+    );
+  });
+
+  it('uses the injected atomic writer when restoring backup contents', async () => {
+    const root = await tempDir();
+    const backupPath = path.join(root, 'backup.yaml');
+    const kubeconfigPath = path.join(root, 'config');
+    const writeFileAtomic = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    await writeFile(backupPath, 'users:\n  - name: original\n', 'utf8');
+    await writeFile(kubeconfigPath, 'users:\n  - name: changed\n', 'utf8');
+
+    await runRestore({
+      backup: backupPath,
+      kubeconfig: kubeconfigPath,
+      yes: true,
+    }, { home: root, writeFileAtomic });
+
+    expect(writeFileAtomic).toHaveBeenCalledWith(
+      kubeconfigPath,
+      'users:\n  - name: original\n',
+    );
+    await expect(readFile(kubeconfigPath, 'utf8')).resolves.toBe(
+      'users:\n  - name: changed\n',
     );
   });
 
