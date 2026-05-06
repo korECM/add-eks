@@ -1,5 +1,13 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -13,18 +21,18 @@ async function tempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'add-eks-token-'));
 }
 
-describe('add-eks-token POSIX helper', () => {
-  it('caches aws ExecCredential JSON and reuses it on the second run', async () => {
-    const root = await tempDir();
-    const binDir = path.join(root, 'bin');
-    const cacheDir = path.join(root, 'cache');
-    const callsPath = path.join(root, 'aws-calls');
-    const awsPath = path.join(binDir, 'aws');
+async function writeFakeAws(input: {
+  binDir: string;
+  callsPath: string;
+  expectedArgs?: string;
+  fail?: boolean;
+}): Promise<void> {
+  const awsPath = path.join(input.binDir, 'aws');
 
-    await mkdir(binDir);
-    await writeFile(
-      awsPath,
-      `#!/bin/sh
+  await mkdir(input.binDir);
+  await writeFile(
+    awsPath,
+    `#!/bin/sh
 set -eu
 count=0
 if [ -f "$AWS_CALL_COUNT" ]; then
@@ -33,42 +41,70 @@ fi
 count=$(expr "$count" + 1)
 printf '%s\\n' "$count" > "$AWS_CALL_COUNT"
 
-if [ "$*" != "eks get-token --cluster-name dev --region us-west-2 --profile team" ]; then
+if [ "${input.expectedArgs ?? ''}" != "" ] && [ "$*" != "${input.expectedArgs ?? ''}" ]; then
   printf 'unexpected aws command\\n' >&2
   printf '%s\\n' "$*" >&2
   exit 11
 fi
 
-printf '%s\\n' '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"expirationTimestamp":"2999-01-01T00:00:00Z","token":"cached-token"}}'
-`,
-      'utf8',
-    );
-    await chmod(awsPath, 0o755);
+if [ "${input.fail === true ? '1' : ''}" = "1" ]; then
+  printf 'fake aws failed\\n' >&2
+  exit 12
+fi
 
-    const env = {
-      ...process.env,
-      ADD_EKS_DEBUG: '1',
-      AWS_CALL_COUNT: callsPath,
-      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
-    };
-    const args = [
-      '--cluster',
-      'dev',
-      '--region',
-      'us-west-2',
-      '--cache-dir',
-      cacheDir,
-      '--safety-margin',
-      '60',
-      '--cache-key',
-      'cluster-region-profile',
-      '--profile',
-      'team',
-    ];
+printf '%s\\n' "{\\"apiVersion\\":\\"client.authentication.k8s.io/v1beta1\\",\\"kind\\":\\"ExecCredential\\",\\"status\\":{\\"expirationTimestamp\\":\\"2999-01-01T00:00:00Z\\",\\"token\\":\\"token-$count\\"}}"
+`,
+    'utf8',
+  );
+  await chmod(awsPath, 0o755);
+}
+
+function testEnv(input: { binDir: string; callsPath: string; debug?: boolean }): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ADD_EKS_DEBUG: input.debug === false ? '' : '1',
+    AWS_CALL_COUNT: input.callsPath,
+    PATH: `${input.binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+  };
+}
+
+function baseArgs(cacheDir: string, extra: string[] = []): string[] {
+  return [
+    '--cluster',
+    'dev',
+    '--region',
+    'us-west-2',
+    '--cache-dir',
+    cacheDir,
+    '--safety-margin',
+    '60',
+    '--cache-key',
+    'cluster-region-profile',
+    '--profile',
+    'team',
+    ...extra,
+  ];
+}
+
+describe('add-eks-token POSIX helper', () => {
+  it('caches aws ExecCredential JSON and reuses it on the second run', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({
+      binDir,
+      callsPath,
+      expectedArgs: 'eks get-token --cluster-name dev --region us-west-2 --profile team',
+    });
+
+    const env = testEnv({ binDir, callsPath });
+    const args = baseArgs(cacheDir);
 
     const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
     const firstJson = JSON.parse(first.stdout);
-    expect(firstJson.status.token).toBe('cached-token');
+    expect(firstJson.status.token).toBe('token-1');
     expect(first.stderr).toContain('cache miss');
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
 
@@ -84,10 +120,167 @@ printf '%s\\n' '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"Exe
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
 
     const quiet = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], {
-      env: { ...env, ADD_EKS_DEBUG: '' },
+      env: testEnv({ binDir, callsPath, debug: false }),
     });
     expect(JSON.parse(quiet.stdout)).toEqual(firstJson);
     expect(quiet.stderr).toBe('');
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
+  });
+
+  it('treats an invalid future expiration timestamp in cache as a miss', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath });
+    const args = baseArgs(cacheDir);
+
+    await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+    const [cacheFile] = await readdir(cacheDir);
+    await writeFile(
+      path.join(cacheDir, cacheFile),
+      '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"expirationTimestamp":"2999-02-31T00:00:00Z","token":"invalid-cache"}}\n',
+      'utf8',
+    );
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-2');
+    expect(result.stderr).toContain('cache miss');
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
+  });
+
+  it('treats an expired cached token as a miss', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath });
+    const args = baseArgs(cacheDir);
+
+    await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+    const [cacheFile] = await readdir(cacheDir);
+    await writeFile(
+      path.join(cacheDir, cacheFile),
+      '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"expirationTimestamp":"2000-01-01T00:00:00Z","token":"expired-cache"}}\n',
+      'utf8',
+    );
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-2');
+    expect(result.stderr).toContain('cache miss');
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
+  });
+
+  it('keeps role ARN values isolated in cache identity', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath });
+    const roleOneArgs = baseArgs(cacheDir, [
+      '--role-arn',
+      'arn:aws:iam::111111111111:role/app',
+    ]);
+    const roleTwoArgs = baseArgs(cacheDir, [
+      '--role-arn',
+      'arn:aws:iam::222222222222:role/app',
+    ]);
+
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...roleOneArgs], {
+      env,
+    });
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...roleTwoArgs], {
+      env,
+    });
+    const third = await execFileAsync('/bin/sh', [helperPath.pathname, ...roleOneArgs], {
+      env,
+    });
+
+    expect(JSON.parse(first.stdout).status.token).toBe('token-1');
+    expect(JSON.parse(second.stdout).status.token).toBe('token-2');
+    expect(JSON.parse(third.stdout).status.token).toBe('token-1');
+    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
+  });
+
+  it('uses a hash so lossy-safe key prefixes do not collide', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath });
+    const slashArgs = [
+      '--cluster',
+      'team/dev',
+      '--region',
+      'us-west-2',
+      '--cache-dir',
+      cacheDir,
+      '--safety-margin',
+      '60',
+      '--cache-key',
+      'cluster',
+    ];
+    const colonArgs = [
+      '--cluster',
+      'team:dev',
+      '--region',
+      'us-west-2',
+      '--cache-dir',
+      cacheDir,
+      '--safety-margin',
+      '60',
+      '--cache-key',
+      'cluster',
+    ];
+
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...slashArgs], {
+      env,
+    });
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...colonArgs], {
+      env,
+    });
+    const third = await execFileAsync('/bin/sh', [helperPath.pathname, ...slashArgs], {
+      env,
+    });
+
+    expect(JSON.parse(first.stdout).status.token).toBe('token-1');
+    expect(JSON.parse(second.stdout).status.token).toBe('token-2');
+    expect(JSON.parse(third.stdout).status.token).toBe('token-1');
+    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
+  });
+
+  it('keeps stdout empty and relays stderr when aws fails', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath, fail: true });
+
+    await expect(
+      execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+        env: testEnv({ binDir, callsPath, debug: false }),
+      }),
+    ).rejects.toMatchObject({
+      stdout: '',
+      stderr: expect.stringContaining('fake aws failed'),
+    });
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
   });
 });

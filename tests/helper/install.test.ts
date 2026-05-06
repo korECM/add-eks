@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -33,6 +34,35 @@ describe('installHelper', () => {
     const helperPath = path.join(root, 'bin', 'add-eks-token');
 
     await installHelper({ helperPath });
+
+    const installed = await readFile(helperPath, 'utf8');
+    expect(installed.startsWith('#!/bin/sh\n')).toBe(true);
+    expect(installed).toContain('aws eks get-token');
+    expect((await stat(helperPath)).mode & 0o777).toBe(0o755);
+  });
+
+  it('can install the bundled helper from the built package layout when dist exists', async () => {
+    const distIndex = path.resolve('dist/index.js');
+    const sourceIndex = path.resolve('src/index.ts');
+    const sourceInstall = path.resolve('src/helper/install.ts');
+    try {
+      await access(distIndex);
+    } catch {
+      return;
+    }
+    const distTime = (await stat(distIndex)).mtimeMs;
+    if (
+      distTime < (await stat(sourceIndex)).mtimeMs ||
+      distTime < (await stat(sourceInstall)).mtimeMs
+    ) {
+      return;
+    }
+
+    const root = await tempDir();
+    const helperPath = path.join(root, 'from-dist', 'add-eks-token');
+    const built = (await import(pathToFileURL(distIndex).href)) as typeof import('../../src/index.js');
+
+    await built.installHelper({ helperPath });
 
     const installed = await readFile(helperPath, 'utf8');
     expect(installed.startsWith('#!/bin/sh\n')).toBe(true);

@@ -26,8 +26,31 @@ safe_name() {
   printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'
 }
 
+safe_prefix() {
+  value=$(safe_name "$1" | cut -c 1-80)
+  if [ "$value" = "" ]; then
+    printf 'key'
+  else
+    printf '%s' "$value"
+  fi
+}
+
 expiration_timestamp() {
   sed -n 's/.*"expirationTimestamp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sed -n '1p'
+}
+
+format_epoch() {
+  epoch=$1
+
+  formatted=$(date -u -d "@$epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+  if [ "$formatted" = "" ]; then
+    formatted=$(date -u -r "$epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+  fi
+
+  case "$formatted" in
+    ????-??-??T??:??:??Z) printf '%s\n' "$formatted" ;;
+    *) return 1 ;;
+  esac
 }
 
 timestamp_epoch() {
@@ -46,8 +69,14 @@ timestamp_epoch() {
 
   case "$epoch" in
     ''|*[!0-9]*) return 1 ;;
-    *) printf '%s\n' "$epoch" ;;
   esac
+
+  round_trip=$(format_epoch "$epoch") || return 1
+  if [ "$round_trip" != "$normalized" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$epoch"
 }
 
 cache_key_value() {
@@ -79,6 +108,24 @@ cache_key_value() {
       printf '%s__%s__%s' "$cluster" "$region" "${profile:-default}"
       ;;
   esac
+}
+
+cache_key_material() {
+  key_value=$1
+
+  printf 'strategy=%s\n' "$cache_key"
+  printf 'value=%s\n' "$key_value"
+  printf 'role_arn=%s\n' "${role_arn:-}"
+}
+
+cache_file_name() {
+  key_value=$1
+  key_material=$(cache_key_material "$key_value")
+  set -- $(printf '%s' "$key_material" | cksum)
+  cache_hash=$1-$2
+  prefix=$(safe_prefix "$cache_key-$(safe_name "$key_value")")
+
+  printf '%s-%s.json\n' "$prefix" "$cache_hash"
 }
 
 read_cache_if_fresh() {
@@ -251,10 +298,8 @@ mkdir -p "$cache_dir" || fatal "failed to create cache dir: $cache_dir"
 chmod 700 "$cache_dir" || fatal "failed to set cache dir mode: $cache_dir"
 
 key_value=$(cache_key_value)
-safe_key=$(safe_name "$cache_key")
-safe_value=$(safe_name "$key_value")
-[ "$safe_value" != "" ] || fatal 'cache key produced an empty filename'
-cache_file=$cache_dir/$safe_key-$safe_value.json
+cache_name=$(cache_file_name "$key_value")
+cache_file=$cache_dir/$cache_name
 
 if read_cache_if_fresh "$cache_file"; then
   exit 0
