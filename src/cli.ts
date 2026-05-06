@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 
+import { runCacheClear, runCacheList, runCacheStatus } from './commands/cache.js';
 import { runUpdate } from './commands/update.js';
 import { name, version } from './index.js';
 
@@ -51,11 +52,125 @@ program
     }
   });
 
+const cacheCommand = program
+  .command('cache')
+  .description('Inspect and clear cached EKS ExecCredential files.');
+
+cacheCommand
+  .command('list')
+  .description('List cache entries.')
+  .option('--cache-dir <path>', 'token cache directory to inspect')
+  .option('--cluster <name>', 'filter entries by cluster when filename metadata allows it')
+  .option('--region <name>', 'filter entries by region when filename metadata allows it')
+  .option('--profile <name>', 'filter entries by profile when filename metadata allows it')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: CacheOptions) => {
+    try {
+      const result = await runCacheList(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      if (result.entries.length === 0) {
+        process.stdout.write('No cache entries found.\n');
+        return;
+      }
+
+      for (const entry of result.entries) {
+        process.stdout.write(`${formatCacheEntry(entry)}\n`);
+      }
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
+cacheCommand
+  .command('status')
+  .description('Summarize cache entry status.')
+  .option('--cache-dir <path>', 'token cache directory to inspect')
+  .option('--cluster <name>', 'filter entries by cluster when filename metadata allows it')
+  .option('--region <name>', 'filter entries by region when filename metadata allows it')
+  .option('--profile <name>', 'filter entries by profile when filename metadata allows it')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: CacheOptions) => {
+    try {
+      const result = await runCacheStatus(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      const statuses = Object.entries(result.counts)
+        .map(([status, count]) => `${status}: ${count}`)
+        .join(', ');
+      process.stdout.write(`Cache dir: ${result.cacheDir}\n`);
+      process.stdout.write(`Entries: ${result.totalEntries}\n`);
+      process.stdout.write(`Size: ${result.totalSize} bytes\n`);
+      process.stdout.write(`Status: ${statuses === '' ? 'none' : statuses}\n`);
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
+cacheCommand
+  .command('clear')
+  .description('Clear cache entries.')
+  .option('--cache-dir <path>', 'token cache directory to clear')
+  .option('--cluster <name>', 'clear entries by cluster when filename metadata allows it')
+  .option('--region <name>', 'clear entries by region when filename metadata allows it')
+  .option('--profile <name>', 'clear entries by profile when filename metadata allows it')
+  .option('--yes', 'confirm cache deletion')
+  .option('--dry-run', 'show what would be cleared without deleting files')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: CacheOptions) => {
+    try {
+      const result = await runCacheClear(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      if (result.dryRun) {
+        process.stdout.write(
+          `Would delete ${result.wouldDeleteCount} cache entries; skipped ${result.skippedCount}.\n`,
+        );
+        return;
+      }
+
+      process.stdout.write(
+        `Deleted ${result.deletedCount} cache entries; skipped ${result.skippedCount}.\n`,
+      );
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
 type UpdateOptions = Parameters<typeof runUpdate>[0];
+type CacheOptions = Parameters<typeof runCacheList>[0];
+type CacheEntry = Awaited<ReturnType<typeof runCacheList>>['entries'][number];
 
 function collect(value: string, previous: string[]): string[] {
   previous.push(value);
   return previous;
+}
+
+function formatCacheEntry(entry: CacheEntry): string {
+  const details = [
+    entry.expirationTimestamp === undefined ? undefined : `expires=${entry.expirationTimestamp}`,
+    entry.cluster === undefined ? undefined : `cluster=${entry.cluster}`,
+    entry.region === undefined ? undefined : `region=${entry.region}`,
+    entry.profile === undefined ? undefined : `profile=${entry.profile}`,
+  ].filter((value) => value !== undefined);
+
+  const suffix = details.length === 0 ? '' : ` ${details.join(' ')}`;
+  return `${entry.name} ${entry.status} ${entry.size}B${suffix}`;
+}
+
+function writeCommandError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`Error: ${message}\n`);
+  process.exitCode = 1;
 }
 
 await program.parseAsync(process.argv);
