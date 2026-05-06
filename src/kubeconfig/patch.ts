@@ -1,3 +1,4 @@
+import type { CacheKeyStrategy } from '../core/options.js';
 import { findEksContexts } from './detect.js';
 import type { EksContextDetection, Kubeconfig, KubeconfigExec } from './types.js';
 
@@ -9,7 +10,7 @@ export interface PlanPatchInput {
   helperPath: string;
   cacheDir: string;
   safetyMargin: number;
-  cacheKey: string;
+  cacheKey: CacheKeyStrategy;
   profile?: string;
 }
 
@@ -22,6 +23,8 @@ export function planPatch(input: PlanPatchInput): PlanPatchResult {
   const originalContexts = new Map(
     (input.config.contexts ?? []).map((entry) => [entry.name, entry] as const)
   );
+  const userReferenceCounts = countUserReferences(input.config);
+  const usedUserNames = new Set((input.config.users ?? []).map((entry) => entry.name));
   const detections = new Map(
     findEksContexts(input.config).map((detection) => [detection.contextName, detection] as const)
   );
@@ -38,35 +41,40 @@ export function planPatch(input: PlanPatchInput): PlanPatchResult {
       );
     }
 
-    const userName = originalContexts.get(contextName)?.context?.user;
-    if (userName === undefined) {
+    const originalUserName = originalContexts.get(contextName)?.context?.user;
+    if (originalUserName === undefined) {
       throw new Error(`Selected context '${contextName}' does not specify a user to patch`);
     }
+    const userIsShared = (userReferenceCounts.get(originalUserName) ?? 0) > 1;
 
     return {
       contextName,
-      userName,
+      originalUserName,
+      targetUserName: userIsShared
+        ? reservePatchedUserName(usedUserNames, originalUserName, contextName)
+        : originalUserName,
+      cloneUser: userIsShared,
       cluster: detection.cluster,
       region: detection.region
     };
   });
 
   const config = structuredClone(input.config);
+  const contexts = new Map((config.contexts ?? []).map((entry) => [entry.name, entry] as const));
   const users = new Map((config.users ?? []).map((entry) => [entry.name, entry] as const));
   const changedContexts: string[] = [];
 
   for (const plan of patchPlans) {
-    const userEntry = users.get(plan.userName);
+    const userEntry = users.get(plan.originalUserName);
     if (userEntry === undefined) {
       throw new Error(
-        `Selected context '${plan.contextName}' references missing user '${plan.userName}'`
+        `Selected context '${plan.contextName}' references missing user '${plan.originalUserName}'`
       );
     }
 
     const existingUser = userEntry.user ?? {};
     const existingExec = existingUser.exec;
-
-    userEntry.user = {
+    const patchedUser = {
       ...existingUser,
       exec: buildExec({
         existingExec,
@@ -79,10 +87,60 @@ export function planPatch(input: PlanPatchInput): PlanPatchResult {
         profile: input.profile
       })
     };
+
+    if (plan.cloneUser) {
+      const contextEntry = contexts.get(plan.contextName);
+      if (contextEntry?.context === undefined) {
+        throw new Error(`Selected context '${plan.contextName}' does not specify patchable details`);
+      }
+
+      contextEntry.context.user = plan.targetUserName;
+      const clonedUserEntry = {
+        ...userEntry,
+        name: plan.targetUserName,
+        user: patchedUser
+      };
+      config.users = [...(config.users ?? []), clonedUserEntry];
+      users.set(plan.targetUserName, clonedUserEntry);
+    } else {
+      userEntry.user = patchedUser;
+    }
+
     changedContexts.push(plan.contextName);
   }
 
   return { config, changedContexts };
+}
+
+function countUserReferences(config: Kubeconfig): Map<string, number> {
+  const counts = new Map<string, number>();
+
+  for (const contextEntry of config.contexts ?? []) {
+    const userName = contextEntry.context?.user;
+    if (userName !== undefined) {
+      counts.set(userName, (counts.get(userName) ?? 0) + 1);
+    }
+  }
+
+  return counts;
+}
+
+function reservePatchedUserName(
+  usedUserNames: Set<string>,
+  originalUserName: string,
+  contextName: string
+): string {
+  const baseName = `${originalUserName}:add-eks:${contextName}`;
+  let candidate = baseName;
+  let suffix = 2;
+
+  while (usedUserNames.has(candidate)) {
+    candidate = `${baseName}:${suffix}`;
+    suffix += 1;
+  }
+
+  usedUserNames.add(candidate);
+  return candidate;
 }
 
 function hasClusterAndRegion(
@@ -98,7 +156,7 @@ function buildExec(input: {
   region: string;
   cacheDir: string;
   safetyMargin: number;
-  cacheKey: string;
+  cacheKey: CacheKeyStrategy;
   profile?: string;
 }): KubeconfigExec {
   return {
@@ -115,7 +173,7 @@ function buildArgs(input: {
   region: string;
   cacheDir: string;
   safetyMargin: number;
-  cacheKey: string;
+  cacheKey: CacheKeyStrategy;
   profile?: string;
 }): string[] {
   const args = [

@@ -23,7 +23,7 @@ describe('planPatch', () => {
       helperPath: '/opt/add-eks/helper',
       cacheDir: '/tmp/add-eks-cache',
       safetyMargin: 90,
-      cacheKey: 'prod-key'
+      cacheKey: 'cluster-region-profile'
     });
 
     expect(result.changedContexts).toEqual(['prod']);
@@ -82,7 +82,7 @@ users:
       helperPath: '/opt/add-eks/helper',
       cacheDir: '/tmp/add-eks-cache',
       safetyMargin: 90,
-      cacheKey: 'prod-key'
+      cacheKey: 'cluster-region-profile'
     });
 
     expect(result.config).toMatchObject({
@@ -147,7 +147,7 @@ users:
       helperPath: '/opt/add-eks/helper',
       cacheDir: '/tmp/add-eks-cache',
       safetyMargin: 90,
-      cacheKey: 'prod-key'
+      cacheKey: 'cluster-region-profile'
     });
 
     const user = result.config.users?.[0]?.user;
@@ -165,7 +165,7 @@ users:
         '--safety-margin',
         '90',
         '--cache-key',
-        'prod-key'
+        'cluster-region-profile'
       ],
       interactiveMode: 'Never'
     });
@@ -178,7 +178,7 @@ users:
       helperPath: '/opt/add-eks/helper',
       cacheDir: '/tmp/add-eks-cache',
       safetyMargin: 90,
-      cacheKey: 'prod-key',
+      cacheKey: 'cluster-region-profile',
       profile: 'work'
     });
 
@@ -192,9 +192,154 @@ users:
       '--safety-margin',
       '90',
       '--cache-key',
-      'prod-key',
+      'cluster-region-profile',
       '--profile',
       'work'
+    ]);
+  });
+
+  it('keeps an unselected context bound to the original shared user', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+    cluster:
+      server: https://prod.gr7.ap-northeast-2.eks.amazonaws.com
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/dev
+    cluster:
+      server: https://dev.gr7.ap-northeast-2.eks.amazonaws.com
+contexts:
+  - name: prod
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+      user: shared-user
+  - name: dev
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/dev
+      user: shared-user
+users:
+  - name: shared-user
+    user:
+      token: original-token
+`);
+
+    const result = planPatch({
+      config,
+      contexts: ['prod'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'cluster-region-profile'
+    });
+
+    expect(result.config.contexts).toEqual([
+      {
+        name: 'prod',
+        context: {
+          cluster: 'arn:aws:eks:ap-northeast-2:123456789012:cluster/prod',
+          user: 'shared-user:add-eks:prod'
+        }
+      },
+      {
+        name: 'dev',
+        context: {
+          cluster: 'arn:aws:eks:ap-northeast-2:123456789012:cluster/dev',
+          user: 'shared-user'
+        }
+      }
+    ]);
+    expect(result.config.users).toEqual([
+      {
+        name: 'shared-user',
+        user: {
+          token: 'original-token'
+        }
+      },
+      {
+        name: 'shared-user:add-eks:prod',
+        user: expect.objectContaining({
+          token: 'original-token',
+          exec: expect.objectContaining({
+            command: '/opt/add-eks/helper',
+            args: expect.arrayContaining(['--cluster', 'prod', '--region', 'ap-northeast-2'])
+          })
+        })
+      }
+    ]);
+  });
+
+  it('patches two selected contexts sharing a user with different cluster and region args', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+    cluster:
+      server: https://prod.gr7.ap-northeast-2.eks.amazonaws.com
+  - name: arn:aws:eks:us-west-2:123456789012:cluster/stage
+    cluster:
+      server: https://stage.gr7.us-west-2.eks.amazonaws.com
+contexts:
+  - name: prod
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+      user: shared-user
+  - name: stage
+    context:
+      cluster: arn:aws:eks:us-west-2:123456789012:cluster/stage
+      user: shared-user
+users:
+  - name: shared-user
+    user:
+      token: original-token
+`);
+
+    const result = planPatch({
+      config,
+      contexts: ['prod', 'stage'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'cluster-region-profile'
+    });
+
+    expect(result.config.contexts?.map((entry) => entry.context?.user)).toEqual([
+      'shared-user:add-eks:prod',
+      'shared-user:add-eks:stage'
+    ]);
+    expect(result.config.users?.find((entry) => entry.name === 'shared-user')?.user).toEqual({
+      token: 'original-token'
+    });
+    expect(
+      result.config.users?.find((entry) => entry.name === 'shared-user:add-eks:prod')?.user?.exec
+        ?.args
+    ).toEqual([
+      '--cluster',
+      'prod',
+      '--region',
+      'ap-northeast-2',
+      '--cache-dir',
+      '/tmp/add-eks-cache',
+      '--safety-margin',
+      '90',
+      '--cache-key',
+      'cluster-region-profile'
+    ]);
+    expect(
+      result.config.users?.find((entry) => entry.name === 'shared-user:add-eks:stage')?.user?.exec
+        ?.args
+    ).toEqual([
+      '--cluster',
+      'stage',
+      '--region',
+      'us-west-2',
+      '--cache-dir',
+      '/tmp/add-eks-cache',
+      '--safety-margin',
+      '90',
+      '--cache-key',
+      'cluster-region-profile'
     ]);
   });
 
@@ -208,7 +353,7 @@ users:
       helperPath: '/opt/add-eks/helper',
       cacheDir: '/tmp/add-eks-cache',
       safetyMargin: 90,
-      cacheKey: 'prod-key'
+      cacheKey: 'cluster-region-profile'
     });
 
     expect(config).toEqual(original);
@@ -224,7 +369,7 @@ users:
         helperPath: '/opt/add-eks/helper',
         cacheDir: '/tmp/add-eks-cache',
         safetyMargin: 90,
-        cacheKey: 'prod-key'
+        cacheKey: 'cluster-region-profile'
       })
     ).toThrow("Selected context 'missing' does not exist");
   });
@@ -254,7 +399,7 @@ users:
         helperPath: '/opt/add-eks/helper',
         cacheDir: '/tmp/add-eks-cache',
         safetyMargin: 90,
-        cacheKey: 'prod-key'
+        cacheKey: 'cluster-region-profile'
       })
     ).toThrow("Selected context 'server-only' is not a detectable EKS context with cluster and region");
   });
