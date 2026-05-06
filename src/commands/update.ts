@@ -19,6 +19,7 @@ export interface UpdateOptions extends RuntimeOptionFlags {
   context?: string | string[];
   all?: boolean;
   profile?: string;
+  region?: string;
   backup?: boolean;
   yes?: boolean;
   dryRun?: boolean;

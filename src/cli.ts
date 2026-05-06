@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 
 import { runCacheClear, runCacheList, runCacheStatus } from './commands/cache.js';
+import { runInteractive } from './commands/interactive.js';
 import { runRestore } from './commands/restore.js';
 import { runRevert } from './commands/revert.js';
 import { runUpdate } from './commands/update.js';
@@ -13,8 +14,13 @@ program
   .name(name)
   .description('Friendly EKS kubeconfig setup with cached token support.')
   .version(version)
-  .action(() => {
-    program.outputHelp();
+  .action(async () => {
+    try {
+      const result = await runInteractive();
+      writeUpdateResult(result);
+    } catch (error) {
+      writeCommandError(error);
+    }
   });
 
 program
@@ -42,11 +48,7 @@ program
         return;
       }
 
-      const prefix = result.dryRun ? 'Would update' : 'Updated';
-      process.stdout.write(`${prefix} contexts: ${result.changedContexts.join(', ')}\n`);
-      if (result.backupPath !== undefined) {
-        process.stdout.write(`Backup: ${result.backupPath}\n`);
-      }
+      writeUpdateResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`Error: ${message}\n`);
@@ -220,6 +222,14 @@ function formatCacheEntry(entry: CacheEntry): string {
 
   const suffix = details.length === 0 ? '' : ` ${details.join(' ')}`;
   return `${entry.name} ${entry.status} ${entry.size}B${suffix}`;
+}
+
+function writeUpdateResult(result: Awaited<ReturnType<typeof runUpdate>>): void {
+  const prefix = result.dryRun ? 'Would update' : 'Updated';
+  process.stdout.write(`${prefix} contexts: ${result.changedContexts.join(', ')}\n`);
+  if (result.backupPath !== undefined) {
+    process.stdout.write(`Backup: ${result.backupPath}\n`);
+  }
 }
 
 function writeCommandError(error: unknown): void {
