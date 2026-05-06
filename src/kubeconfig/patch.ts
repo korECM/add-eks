@@ -20,16 +20,17 @@ export interface PlanPatchResult {
 }
 
 export function planPatch(input: PlanPatchInput): PlanPatchResult {
+  const selectedContextNames = [...new Set(input.contexts)];
   const originalContexts = new Map(
     (input.config.contexts ?? []).map((entry) => [entry.name, entry] as const)
   );
   const userReferenceCounts = countUserReferences(input.config);
-  const usedUserNames = new Set((input.config.users ?? []).map((entry) => entry.name));
+  const usedUserNames = collectReservedUserNames(input.config);
   const detections = new Map(
     findEksContexts(input.config).map((detection) => [detection.contextName, detection] as const)
   );
 
-  const patchPlans = input.contexts.map((contextName) => {
+  const patchPlans = selectedContextNames.map((contextName) => {
     if (!originalContexts.has(contextName)) {
       throw new Error(`Selected context '${contextName}' does not exist`);
     }
@@ -123,6 +124,19 @@ function countUserReferences(config: Kubeconfig): Map<string, number> {
   }
 
   return counts;
+}
+
+function collectReservedUserNames(config: Kubeconfig): Set<string> {
+  const userNames = new Set((config.users ?? []).map((entry) => entry.name));
+
+  for (const contextEntry of config.contexts ?? []) {
+    const userName = contextEntry.context?.user;
+    if (userName !== undefined) {
+      userNames.add(userName);
+    }
+  }
+
+  return userNames;
 }
 
 function reservePatchedUserName(

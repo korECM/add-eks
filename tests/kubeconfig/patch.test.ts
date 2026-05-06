@@ -343,6 +343,105 @@ users:
     ]);
   });
 
+  it('does not generate a user name already referenced by an unselected dangling context', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+    cluster:
+      server: https://prod.gr7.ap-northeast-2.eks.amazonaws.com
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/dev
+    cluster:
+      server: https://dev.gr7.ap-northeast-2.eks.amazonaws.com
+  - name: local
+    cluster:
+      server: https://local.example.com
+contexts:
+  - name: prod
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+      user: shared-user
+  - name: dev
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/dev
+      user: shared-user
+  - name: dangling
+    context:
+      cluster: local
+      user: shared-user:add-eks:prod
+users:
+  - name: shared-user
+    user:
+      token: original-token
+`);
+
+    const result = planPatch({
+      config,
+      contexts: ['prod'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'cluster-region-profile'
+    });
+
+    expect(result.config.contexts?.map((entry) => entry.context?.user)).toEqual([
+      'shared-user:add-eks:prod:2',
+      'shared-user',
+      'shared-user:add-eks:prod'
+    ]);
+    expect(result.config.users?.map((entry) => entry.name)).toEqual([
+      'shared-user',
+      'shared-user:add-eks:prod:2'
+    ]);
+  });
+
+  it('dedupes duplicate selected context names before planning', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+    cluster:
+      server: https://prod.gr7.ap-northeast-2.eks.amazonaws.com
+  - name: arn:aws:eks:ap-northeast-2:123456789012:cluster/dev
+    cluster:
+      server: https://dev.gr7.ap-northeast-2.eks.amazonaws.com
+contexts:
+  - name: prod
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/prod
+      user: shared-user
+  - name: dev
+    context:
+      cluster: arn:aws:eks:ap-northeast-2:123456789012:cluster/dev
+      user: shared-user
+users:
+  - name: shared-user
+    user:
+      token: original-token
+`);
+
+    const result = planPatch({
+      config,
+      contexts: ['prod', 'prod'],
+      helperPath: '/opt/add-eks/helper',
+      cacheDir: '/tmp/add-eks-cache',
+      safetyMargin: 90,
+      cacheKey: 'cluster-region-profile'
+    });
+
+    expect(result.changedContexts).toEqual(['prod']);
+    expect(result.config.contexts?.map((entry) => entry.context?.user)).toEqual([
+      'shared-user:add-eks:prod',
+      'shared-user'
+    ]);
+    expect(result.config.users?.map((entry) => entry.name)).toEqual([
+      'shared-user',
+      'shared-user:add-eks:prod'
+    ]);
+  });
+
   it('does not mutate original config', () => {
     const config = loadFixture();
     const original = structuredClone(config);
