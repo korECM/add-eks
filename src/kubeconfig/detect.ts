@@ -10,8 +10,21 @@ interface ClusterAndRegion {
   region?: string;
 }
 
-const EKS_ARN_PATTERN = /^arn:aws(?:-[a-z]+)?:eks:([^:]+):\d{12}:cluster\/(.+)$/;
 const AWS_REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
+const AWS_ARN_PARTITIONS = new Set(['aws', 'aws-us-gov', 'aws-cn']);
+const AWS_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  '--ca-bundle',
+  '--cli-binary-format',
+  '--cli-connect-timeout',
+  '--cli-input-json',
+  '--cli-read-timeout',
+  '--color',
+  '--endpoint-url',
+  '--output',
+  '--profile',
+  '--query',
+  '--region'
+]);
 
 export function findEksContexts(config: Kubeconfig): EksContextDetection[] {
   const clusters = new Map(
@@ -78,7 +91,7 @@ function detectAwsEksGetToken(exec: KubeconfigExec | undefined): ClusterAndRegio
   }
 
   const args = exec.args ?? [];
-  if (args[0] !== 'eks' || args[1] !== 'get-token') {
+  if (!hasEksGetTokenCommand(args)) {
     return undefined;
   }
 
@@ -100,16 +113,57 @@ function readFlagValue(args: string[], flag: string): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === flag) {
-      return args[index + 1];
+      return readPositionalFlagValue(args[index + 1]);
     }
 
     const prefix = `${flag}=`;
     if (arg.startsWith(prefix)) {
-      return arg.slice(prefix.length);
+      return readEqualsFlagValue(arg.slice(prefix.length));
     }
   }
 
   return undefined;
+}
+
+function hasEksGetTokenCommand(args: string[]): boolean {
+  let index = 0;
+
+  while (index < args.length) {
+    const arg = args[index];
+    if (arg === 'eks') {
+      return args[index + 1] === 'get-token';
+    }
+
+    if (!arg.startsWith('-')) {
+      return false;
+    }
+
+    index += getAwsGlobalOptionWidth(args, index);
+  }
+
+  return false;
+}
+
+function getAwsGlobalOptionWidth(args: string[], index: number): number {
+  const arg = args[index];
+  const option = arg.split('=', 1)[0];
+  if (arg.includes('=') || !AWS_GLOBAL_OPTIONS_WITH_VALUE.has(option)) {
+    return 1;
+  }
+
+  return readPositionalFlagValue(args[index + 1]) === undefined ? 1 : 2;
+}
+
+function readPositionalFlagValue(value: string | undefined): string | undefined {
+  if (value === undefined || value === '' || value.startsWith('-')) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function readEqualsFlagValue(value: string): string | undefined {
+  return value === '' ? undefined : value;
 }
 
 function findArnDetails(...names: Array<string | undefined>): ClusterAndRegion | undefined {
@@ -118,16 +172,41 @@ function findArnDetails(...names: Array<string | undefined>): ClusterAndRegion |
       continue;
     }
 
-    const match = EKS_ARN_PATTERN.exec(name);
-    if (match !== null) {
-      return {
-        region: match[1],
-        cluster: match[2]
-      };
+    const arn = parseEksClusterArn(name);
+    if (arn !== undefined) {
+      return arn;
     }
   }
 
   return undefined;
+}
+
+function parseEksClusterArn(name: string): ClusterAndRegion | undefined {
+  const parts = name.split(':');
+  if (parts.length !== 6) {
+    return undefined;
+  }
+
+  const [arnPrefix, partition, service, region, accountId, resource] = parts;
+  if (
+    arnPrefix !== 'arn' ||
+    !AWS_ARN_PARTITIONS.has(partition) ||
+    service !== 'eks' ||
+    !AWS_REGION_PATTERN.test(region) ||
+    !/^\d{12}$/.test(accountId)
+  ) {
+    return undefined;
+  }
+
+  const resourceParts = resource.split('/');
+  if (resourceParts.length !== 2 || resourceParts[0] !== 'cluster' || resourceParts[1] === '') {
+    return undefined;
+  }
+
+  return {
+    region,
+    cluster: resourceParts[1]
+  };
 }
 
 function isEksServer(cluster: KubeconfigCluster | undefined): boolean {

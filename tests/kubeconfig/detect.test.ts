@@ -63,6 +63,128 @@ users:
     ]);
   });
 
+  it('detects aws exec with global options before eks get-token', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: global-option-cluster
+    cluster:
+      server: https://example.com
+contexts:
+  - name: global-option
+    context:
+      cluster: global-option-cluster
+      user: global-option-user
+users:
+  - name: global-option-user
+    user:
+      exec:
+        command: aws
+        args:
+          - --region
+          - us-west-2
+          - eks
+          - get-token
+          - --cluster-name
+          - staging
+`);
+
+    expect(findEksContexts(config)).toEqual([
+      expect.objectContaining({
+        contextName: 'global-option',
+        cluster: 'staging',
+        region: 'us-west-2',
+        source: 'aws-exec'
+      })
+    ]);
+  });
+
+  it('detects GovCloud EKS cluster ARNs', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws-us-gov:eks:us-gov-west-1:123456789012:cluster/gov-prod
+    cluster:
+      server: https://example.com
+contexts:
+  - name: gov
+    context:
+      cluster: arn:aws-us-gov:eks:us-gov-west-1:123456789012:cluster/gov-prod
+      user: gov-user
+users:
+  - name: gov-user
+    user: {}
+`);
+
+    expect(findEksContexts(config)).toEqual([
+      expect.objectContaining({
+        contextName: 'gov',
+        cluster: 'gov-prod',
+        region: 'us-gov-west-1',
+        source: 'arn'
+      })
+    ]);
+  });
+
+  it('rejects invalid EKS-looking ARNs', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: arn:aws:eks:us-west-2:123456789012:cluster/prod/extra
+    cluster:
+      server: https://example.com
+contexts:
+  - name: invalid-arn
+    context:
+      cluster: arn:aws:eks:us-west-2:123456789012:cluster/prod/extra
+      user: invalid-arn-user
+users:
+  - name: invalid-arn-user
+    user: {}
+`);
+
+    expect(findEksContexts(config)).toEqual([]);
+  });
+
+  it('ignores malformed flag values that point at another flag', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: malformed-flags-cluster
+    cluster:
+      server: https://example.com
+contexts:
+  - name: malformed-flags
+    context:
+      cluster: malformed-flags-cluster
+      user: malformed-flags-user
+users:
+  - name: malformed-flags-user
+    user:
+      exec:
+        command: aws
+        args:
+          - eks
+          - get-token
+          - --cluster-name
+          - --region
+          - us-west-2
+`);
+
+    const [detected] = findEksContexts(config);
+
+    expect(detected).toMatchObject({
+      contextName: 'malformed-flags',
+      region: 'us-west-2',
+      source: 'aws-exec'
+    });
+    expect(detected?.cluster).toBeUndefined();
+  });
+
   it('includes a best-effort result for an EKS-looking server without guessing region', () => {
     const config = parseKubeconfig(`
 apiVersion: v1
@@ -91,5 +213,26 @@ users:
     ]);
     expect(findEksContexts(config)[0]?.region).toBeUndefined();
     expect(findEksContexts(config)[0]?.cluster).toBeUndefined();
+  });
+
+  it('does not detect non-EKS servers as EKS', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: plain-cluster
+    cluster:
+      server: https://example.eks.amazonaws.example.com
+contexts:
+  - name: plain-server
+    context:
+      cluster: plain-cluster
+      user: plain-user
+users:
+  - name: plain-user
+    user: {}
+`);
+
+    expect(findEksContexts(config)).toEqual([]);
   });
 });
