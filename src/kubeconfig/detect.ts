@@ -138,20 +138,29 @@ function hasEksGetTokenCommand(args: string[]): boolean {
       return false;
     }
 
-    index += getAwsGlobalOptionWidth(args, index);
+    const width = getAwsGlobalOptionWidth(args, index);
+    if (width === undefined) {
+      return false;
+    }
+
+    index += width;
   }
 
   return false;
 }
 
-function getAwsGlobalOptionWidth(args: string[], index: number): number {
+function getAwsGlobalOptionWidth(args: string[], index: number): number | undefined {
   const arg = args[index];
   const option = arg.split('=', 1)[0];
-  if (arg.includes('=') || !AWS_GLOBAL_OPTIONS_WITH_VALUE.has(option)) {
+  if (!AWS_GLOBAL_OPTIONS_WITH_VALUE.has(option)) {
     return 1;
   }
 
-  return readPositionalFlagValue(args[index + 1]) === undefined ? 1 : 2;
+  if (arg.includes('=')) {
+    return readEqualsFlagValue(arg.slice(option.length + 1)) === undefined ? undefined : 1;
+  }
+
+  return readPositionalFlagValue(args[index + 1]) === undefined ? undefined : 2;
 }
 
 function readPositionalFlagValue(value: string | undefined): string | undefined {
@@ -193,6 +202,7 @@ function parseEksClusterArn(name: string): ClusterAndRegion | undefined {
     !AWS_ARN_PARTITIONS.has(partition) ||
     service !== 'eks' ||
     !AWS_REGION_PATTERN.test(region) ||
+    !isRegionCompatibleWithPartition(partition, region) ||
     !/^\d{12}$/.test(accountId)
   ) {
     return undefined;
@@ -207,6 +217,18 @@ function parseEksClusterArn(name: string): ClusterAndRegion | undefined {
     region,
     cluster: resourceParts[1]
   };
+}
+
+function isRegionCompatibleWithPartition(partition: string, region: string): boolean {
+  if (partition === 'aws-cn') {
+    return region.startsWith('cn-');
+  }
+
+  if (partition === 'aws-us-gov') {
+    return region.startsWith('us-gov-');
+  }
+
+  return !region.startsWith('cn-') && !region.startsWith('us-gov-');
 }
 
 function isEksServer(cluster: KubeconfigCluster | undefined): boolean {

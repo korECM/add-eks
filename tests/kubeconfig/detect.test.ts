@@ -149,6 +149,30 @@ users:
     expect(findEksContexts(config)).toEqual([]);
   });
 
+  it.each([
+    ['arn:aws-cn:eks:us-west-2:123456789012:cluster/prod'],
+    ['arn:aws-us-gov:eks:ap-northeast-2:123456789012:cluster/prod']
+  ])('rejects partition and region mismatched ARNs: %s', (clusterArn) => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: ${clusterArn}
+    cluster:
+      server: https://example.com
+contexts:
+  - name: partition-mismatch
+    context:
+      cluster: ${clusterArn}
+      user: partition-mismatch-user
+users:
+  - name: partition-mismatch-user
+    user: {}
+`);
+
+    expect(findEksContexts(config)).toEqual([]);
+  });
+
   it('ignores malformed flag values that point at another flag', () => {
     const config = parseKubeconfig(`
 apiVersion: v1
@@ -183,6 +207,36 @@ users:
       source: 'aws-exec'
     });
     expect(detected?.cluster).toBeUndefined();
+  });
+
+  it('rejects aws exec when a value-taking global option has no value', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: invalid-global-option-cluster
+    cluster:
+      server: https://example.com
+contexts:
+  - name: invalid-global-option
+    context:
+      cluster: invalid-global-option-cluster
+      user: invalid-global-option-user
+users:
+  - name: invalid-global-option-user
+    user:
+      exec:
+        command: aws
+        args:
+          - --region
+          - --debug
+          - eks
+          - get-token
+          - --cluster-name
+          - staging
+`);
+
+    expect(findEksContexts(config)).toEqual([]);
   });
 
   it('includes a best-effort result for an EKS-looking server without guessing region', () => {
