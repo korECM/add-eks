@@ -123,7 +123,7 @@ describe('cache core utilities', () => {
     expect(status.entries).toHaveLength(2);
   });
 
-  it('clears all json cache files while skipping non-json files', async () => {
+  it('clears all helper cache files while skipping non-cache files', async () => {
     const root = await tempDir();
     const cacheDir = path.join(root, 'cache');
     await writeCacheFile(
@@ -132,16 +132,41 @@ describe('cache core utilities', () => {
       execCredential('2999-01-01T00:00:00Z'),
     );
     await writeCacheFile(cacheDir, 'broken.json', '{nope');
+    await writeCacheFile(cacheDir, 'settings.json', '{"theme":"dark"}\n');
     await writeCacheFile(cacheDir, 'note.txt', 'keep me');
 
     const result = await clearCacheEntries(cacheDir, {});
 
     expect(result).toMatchObject({
-      deletedCount: 2,
-      skippedCount: 1,
+      deletedCount: 1,
+      skippedCount: 3,
       dryRun: false,
     });
-    expect((await readdir(cacheDir)).sort()).toEqual(['note.txt']);
+    expect((await readdir(cacheDir)).sort()).toEqual([
+      'broken.json',
+      'note.txt',
+      'settings.json',
+    ]);
+  });
+
+  it('does not clear prefix-shaped non-ExecCredential JSON files', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      '{"status":{"expirationTimestamp":"2999-01-01T00:00:00Z"},"kind":"Config"}\n',
+    );
+
+    const result = await clearCacheEntries(cacheDir, {});
+
+    expect(result).toMatchObject({
+      deletedCount: 0,
+      skippedCount: 1,
+    });
+    expect(await readdir(cacheDir)).toEqual([
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+    ]);
   });
 
   it('skips entries that cannot be matched reliably when filters are present', async () => {
@@ -157,15 +182,21 @@ describe('cache core utilities', () => {
       'cluster-region-profile-prod__us-west-2__team-123-46.json',
       execCredential('2999-01-01T00:00:00Z'),
     );
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-47.json',
+      '{"kind":"Config","status":{"expirationTimestamp":"2999-01-01T00:00:00Z"}}\n',
+    );
     await writeCacheFile(cacheDir, 'opaque-123.json', execCredential('2999-01-01T00:00:00Z'));
 
     const result = await clearCacheEntries(cacheDir, { cluster: 'dev' });
 
     expect(result).toMatchObject({
       deletedCount: 1,
-      skippedCount: 2,
+      skippedCount: 3,
     });
     expect((await readdir(cacheDir)).sort()).toEqual([
+      'cluster-region-profile-dev__us-west-2__team-123-47.json',
       'cluster-region-profile-prod__us-west-2__team-123-46.json',
       'opaque-123.json',
     ]);

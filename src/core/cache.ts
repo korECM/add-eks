@@ -15,6 +15,7 @@ export interface CacheEntry {
   mtime: string;
   mtimeMs: number;
   status: CacheEntryStatus;
+  isHelperCacheFile: boolean;
   expirationTimestamp?: string;
   cluster?: string;
   region?: string;
@@ -48,11 +49,16 @@ export interface ClearCacheResult {
 
 export interface CacheSkippedEntry {
   entry: CacheEntry;
-  reason: 'non-cache-file' | 'filter-not-matched' | 'filter-unknown' | 'delete-failed';
+  reason:
+    | 'non-cache-file'
+    | 'filter-not-matched'
+    | 'filter-unknown'
+    | 'delete-failed';
   message?: string;
 }
 
 interface CacheMetadata {
+  helperFileName: boolean;
   cluster?: string;
   region?: string;
   profile?: string;
@@ -143,6 +149,11 @@ export async function clearCacheEntries(
 
 async function readCacheEntry(filePath: string, name: string): Promise<CacheEntry> {
   const metadata = metadataFromName(name);
+  const entryMetadata = {
+    cluster: metadata.cluster,
+    region: metadata.region,
+    profile: metadata.profile,
+  };
 
   try {
     const fileStat = await stat(filePath);
@@ -152,13 +163,14 @@ async function readCacheEntry(filePath: string, name: string): Promise<CacheEntr
       size: fileStat.size,
       mtime: fileStat.mtime.toISOString(),
       mtimeMs: fileStat.mtimeMs,
-      ...metadata,
+      ...entryMetadata,
     };
 
     if (!name.endsWith('.json')) {
       return {
         ...baseEntry,
         status: 'unknown',
+        isHelperCacheFile: false,
       };
     }
 
@@ -169,6 +181,7 @@ async function readCacheEntry(filePath: string, name: string): Promise<CacheEntr
       return {
         ...baseEntry,
         status: 'unreadable',
+        isHelperCacheFile: false,
       };
     }
 
@@ -179,14 +192,19 @@ async function readCacheEntry(filePath: string, name: string): Promise<CacheEntr
       return {
         ...baseEntry,
         status: 'malformed',
+        isHelperCacheFile: false,
       };
     }
 
     const expirationTimestamp = getExpirationTimestamp(parsed);
+    const isHelperCacheFile =
+      metadata.helperFileName && isExecCredentialLike(parsed) && expirationTimestamp !== undefined;
+
     if (expirationTimestamp === undefined) {
       return {
         ...baseEntry,
         status: 'unknown',
+        isHelperCacheFile,
       };
     }
 
@@ -195,11 +213,13 @@ async function readCacheEntry(filePath: string, name: string): Promise<CacheEntr
       return {
         ...baseEntry,
         status: 'unknown',
+        isHelperCacheFile,
       };
     }
 
     return {
       ...baseEntry,
+      isHelperCacheFile,
       expirationTimestamp,
       status: expiration.getTime() > Date.now() ? 'valid' : 'expired',
     };
@@ -212,7 +232,8 @@ async function readCacheEntry(filePath: string, name: string): Promise<CacheEntr
         mtime: new Date(0).toISOString(),
         mtimeMs: 0,
         status: 'unreadable',
-        ...metadata,
+        isHelperCacheFile: false,
+        ...entryMetadata,
       };
     }
 
@@ -225,6 +246,10 @@ function shouldDelete(
   filter: CacheEntryFilter,
 ): { delete: true } | { delete: false; reason: CacheSkippedEntry['reason'] } {
   if (!entry.name.endsWith('.json')) {
+    return { delete: false, reason: 'non-cache-file' };
+  }
+
+  if (!entry.isHelperCacheFile) {
     return { delete: false, reason: 'non-cache-file' };
   }
 
@@ -271,6 +296,18 @@ function getExpirationTimestamp(value: unknown): string | undefined {
     : undefined;
 }
 
+function isExecCredentialLike(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    value.kind === 'ExecCredential' &&
+    typeof value.apiVersion === 'string' &&
+    isRecord(value.status)
+  );
+}
+
 function parseTimestamp(value: string): Date | undefined {
   const match = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.\d+)?Z$/.exec(
     value,
@@ -305,6 +342,7 @@ function parseTimestamp(value: string): Date | undefined {
 
 function metadataFromName(name: string): CacheMetadata {
   const stem = name.endsWith('.json') ? name.slice(0, -'.json'.length) : name;
+  const hasHelperHash = /-\d+-\d+$/.test(stem);
   const hashless = stem.replace(/-\d+-\d+$/, '');
 
   if (hashless.startsWith('cluster-region-profile-')) {
@@ -312,6 +350,7 @@ function metadataFromName(name: string): CacheMetadata {
     const parts = value.split('__');
     if (parts.length === 3) {
       return {
+        helperFileName: hasHelperHash,
         cluster: parts[0],
         region: parts[1],
         profile: parts[2],
@@ -324,6 +363,7 @@ function metadataFromName(name: string): CacheMetadata {
     const parts = value.split('__');
     if (parts.length === 2) {
       return {
+        helperFileName: hasHelperHash,
         cluster: parts[0],
         profile: parts[1],
       };
@@ -332,11 +372,20 @@ function metadataFromName(name: string): CacheMetadata {
 
   if (hashless.startsWith('cluster-')) {
     return {
+      helperFileName: hasHelperHash,
       cluster: hashless.slice('cluster-'.length),
     };
   }
 
-  return {};
+  if (hashless.startsWith('arn-')) {
+    return {
+      helperFileName: hasHelperHash,
+    };
+  }
+
+  return {
+    helperFileName: false,
+  };
 }
 
 function safeName(value: string): string {
