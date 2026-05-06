@@ -25,6 +25,14 @@ const AWS_GLOBAL_OPTIONS_WITH_VALUE = new Set([
   '--query',
   '--region'
 ]);
+const AWS_GLOBAL_OPTIONS_WITHOUT_VALUE = new Set([
+  '--debug',
+  '--no-cli-auto-prompt',
+  '--no-cli-pager',
+  '--no-paginate',
+  '--no-sign-request',
+  '--no-verify-ssl'
+]);
 
 export function findEksContexts(config: Kubeconfig): EksContextDetection[] {
   const clusters = new Map(
@@ -153,7 +161,7 @@ function getAwsGlobalOptionWidth(args: string[], index: number): number | undefi
   const arg = args[index];
   const option = arg.split('=', 1)[0];
   if (!AWS_GLOBAL_OPTIONS_WITH_VALUE.has(option)) {
-    return 1;
+    return AWS_GLOBAL_OPTIONS_WITHOUT_VALUE.has(option) && !arg.includes('=') ? 1 : undefined;
   }
 
   if (arg.includes('=')) {

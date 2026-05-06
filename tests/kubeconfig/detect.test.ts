@@ -239,6 +239,102 @@ users:
     expect(findEksContexts(config)).toEqual([]);
   });
 
+  it('detects aws exec with a supported no-value global option before eks get-token', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: no-value-global-cluster
+    cluster:
+      server: https://example.com
+contexts:
+  - name: no-value-global
+    context:
+      cluster: no-value-global-cluster
+      user: no-value-global-user
+users:
+  - name: no-value-global-user
+    user:
+      exec:
+        command: aws
+        args:
+          - --debug
+          - eks
+          - get-token
+          - --cluster-name
+          - prod
+          - --region
+          - ap-northeast-2
+`);
+
+    expect(findEksContexts(config)).toEqual([
+      expect.objectContaining({
+        contextName: 'no-value-global',
+        cluster: 'prod',
+        region: 'ap-northeast-2',
+        source: 'aws-exec'
+      })
+    ]);
+  });
+
+  it('rejects aws exec with an unknown global option before eks get-token', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: unknown-global-cluster
+    cluster:
+      server: https://example.com
+contexts:
+  - name: unknown-global
+    context:
+      cluster: unknown-global-cluster
+      user: unknown-global-user
+users:
+  - name: unknown-global-user
+    user:
+      exec:
+        command: aws
+        args:
+          - --bogus
+          - eks
+          - get-token
+          - --cluster-name
+          - prod
+`);
+
+    expect(findEksContexts(config)).toEqual([]);
+  });
+
+  it('rejects aws exec when a no-value global option uses equals syntax', () => {
+    const config = parseKubeconfig(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: malformed-no-value-global-cluster
+    cluster:
+      server: https://example.com
+contexts:
+  - name: malformed-no-value-global
+    context:
+      cluster: malformed-no-value-global-cluster
+      user: malformed-no-value-global-user
+users:
+  - name: malformed-no-value-global-user
+    user:
+      exec:
+        command: aws
+        args:
+          - --debug=bad
+          - eks
+          - get-token
+          - --cluster-name
+          - prod
+`);
+
+    expect(findEksContexts(config)).toEqual([]);
+  });
+
   it('includes a best-effort result for an EKS-looking server without guessing region', () => {
     const config = parseKubeconfig(`
 apiVersion: v1
