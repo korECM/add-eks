@@ -87,6 +87,17 @@ profile_cache_label() {
   fi
 }
 
+is_cluster_arn() {
+  case "$1" in
+    arn:aws:eks:*:*:cluster/*|arn:aws-us-gov:eks:*:*:cluster/*|arn:aws-cn:eks:*:*:cluster/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 cache_key_value() {
   profile_label=$(profile_cache_label)
 
@@ -168,6 +179,9 @@ cache_key_material() {
   printf 'strategy=%s\n' "$cache_key"
   printf 'value=%s\n' "$key_value"
   write_profile_identity_material
+  if [ "${arn:-}" != "" ] && is_cluster_arn "$arn"; then
+    printf 'cluster_arn=%s\n' "$arn"
+  fi
   printf 'role_arn=%s\n' "${role_arn:-}"
 }
 

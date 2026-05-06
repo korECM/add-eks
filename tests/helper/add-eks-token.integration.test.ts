@@ -221,6 +221,66 @@ describe('add-eks-token POSIX helper', () => {
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
   });
 
+  it('keeps cluster ARN values isolated under the default cache strategy', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath });
+    const accountOneArgs = baseArgs(cacheDir, [
+      '--cluster-arn',
+      'arn:aws:eks:us-west-2:111111111111:cluster/dev',
+    ]);
+    const accountTwoArgs = baseArgs(cacheDir, [
+      '--cluster-arn',
+      'arn:aws:eks:us-west-2:222222222222:cluster/dev',
+    ]);
+
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...accountOneArgs], {
+      env,
+    });
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...accountTwoArgs], {
+      env,
+    });
+    const third = await execFileAsync('/bin/sh', [helperPath.pathname, ...accountOneArgs], {
+      env,
+    });
+
+    expect(JSON.parse(first.stdout).status.token).toBe('token-1');
+    expect(JSON.parse(second.stdout).status.token).toBe('token-2');
+    expect(JSON.parse(third.stdout).status.token).toBe('token-1');
+    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
+  });
+
+  it('continues to use cluster ARN for arn cache strategy', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const args = baseArgs(cacheDir, [
+      '--cache-key',
+      'arn',
+      '--cluster-arn',
+      'arn:aws:eks:us-west-2:111111111111:cluster/dev',
+    ]);
+    const env = testEnv({ binDir, callsPath });
+
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+
+    expect(JSON.parse(first.stdout).status.token).toBe('token-1');
+    expect(JSON.parse(second.stdout).status.token).toBe('token-1');
+    expect(await readdir(cacheDir)).toHaveLength(1);
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
+  });
+
   it('keeps omitted profile cache identity isolated by ambient AWS_PROFILE', async () => {
     const root = await tempDir();
     const binDir = path.join(root, 'bin');
