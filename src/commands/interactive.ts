@@ -13,8 +13,6 @@ import type { EksContextDetection } from '../kubeconfig/types.js';
 import { runUpdate } from './update.js';
 import type { UpdateOptions, UpdateResult } from './update.js';
 
-const MANUAL_REGION = '__add_eks_manual_region__';
-
 type InteractiveAction = 'update-existing';
 type ApplyMode = 'apply' | 'dry-run';
 
@@ -70,6 +68,14 @@ export interface InteractiveDeps {
   discoverProfiles?: (options: DiscoverAwsProfilesOptions) => Promise<string[]>;
   readFile?: (filePath: string, encoding: BufferEncoding) => Promise<string>;
   runUpdate?: (options: UpdateOptions) => Promise<UpdateResult>;
+}
+
+export interface InteractiveEntrypointDeps {
+  stdin?: { isTTY?: boolean };
+  stdout?: { isTTY?: boolean };
+  stderr?: { write: (message: string) => unknown };
+  runInteractive?: () => Promise<UpdateResult>;
+  writeResult?: (result: UpdateResult) => void;
 }
 
 export async function runInteractive(
@@ -138,6 +144,34 @@ export async function runInteractive(
   return (deps.runUpdate ?? runUpdate)(updateOptions);
 }
 
+export async function runInteractiveEntrypoint(
+  deps: InteractiveEntrypointDeps = {},
+): Promise<number> {
+  const stdin = deps.stdin ?? process.stdin;
+  const stdout = deps.stdout ?? process.stdout;
+  const stderr = deps.stderr ?? process.stderr;
+
+  if (stdin.isTTY !== true || stdout.isTTY !== true) {
+    stderr.write(
+      'Interactive mode requires a TTY. Use an explicit non-interactive command such as `add-eks update --help`.\n',
+    );
+    return 1;
+  }
+
+  try {
+    const result = await (deps.runInteractive ?? (() => runInteractive()))();
+    (deps.writeResult ?? writeDefaultInteractiveResult)(result);
+    return 0;
+  } catch (error) {
+    if (isPromptCancellation(error)) {
+      stderr.write('Interactive setup canceled; no changes were made.\n');
+      return 1;
+    }
+
+    throw error;
+  }
+}
+
 const defaultPrompts: InteractivePromptFunctions = {
   select: (config) => select(config),
   checkbox: (config) => checkbox(config),
@@ -172,23 +206,10 @@ async function promptForRegion(
   const regions = [...new Set(detections.map((detection) => detection.region))]
     .filter((region): region is string => region !== undefined)
     .sort();
-  const selected = await prompts.select<string>({
+  return prompts.select<string>({
     message: 'Choose AWS region',
-    choices: [
-      ...regions.map((region) => ({ name: region, value: region })),
-      { name: 'Enter another region', value: MANUAL_REGION },
-    ],
-    default: regions[0] ?? MANUAL_REGION,
-  });
-
-  if (selected !== MANUAL_REGION) {
-    return selected;
-  }
-
-  return prompts.input({
-    message: 'AWS region',
-    required: true,
-    validate: (value) => value.trim() !== '' || 'Enter an AWS region',
+    choices: regions.map((region) => ({ name: region, value: region })),
+    default: regions[0],
   });
 }
 
@@ -218,4 +239,25 @@ function formatContextChoice(detection: EksContextDetection): string {
   const cluster = detection.cluster === undefined ? 'unknown cluster' : detection.cluster;
   const region = detection.region === undefined ? 'unknown region' : detection.region;
   return `${detection.contextName} (${cluster}, ${region})`;
+}
+
+function writeDefaultInteractiveResult(result: UpdateResult): void {
+  const prefix = result.dryRun ? 'Would update' : 'Updated';
+  process.stdout.write(`${prefix} contexts: ${result.changedContexts.join(', ')}\n`);
+  if (result.backupPath !== undefined) {
+    process.stdout.write(`Backup: ${result.backupPath}\n`);
+  }
+}
+
+function isPromptCancellation(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.name === 'ExitPromptError' ||
+    error.name === 'AbortPromptError' ||
+    error.message.includes('User force closed the prompt') ||
+    error.message.includes('Prompt was canceled')
+  );
 }

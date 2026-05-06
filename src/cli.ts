@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 
 import { runCacheClear, runCacheList, runCacheStatus } from './commands/cache.js';
-import { runInteractive } from './commands/interactive.js';
+import { runInteractive, runInteractiveEntrypoint } from './commands/interactive.js';
 import { runRestore } from './commands/restore.js';
 import { runRevert } from './commands/revert.js';
 import { runUpdate } from './commands/update.js';
@@ -16,8 +16,16 @@ program
   .version(version)
   .action(async () => {
     try {
-      const result = await runInteractive();
-      writeUpdateResult(result);
+      const exitCode = await runInteractiveEntrypoint({
+        stdin: process.stdin,
+        stdout: process.stdout,
+        stderr: process.stderr,
+        runInteractive: () => runInteractive(),
+        writeResult: writeUpdateResult,
+      });
+      if (exitCode !== 0) {
+        process.exitCode = exitCode;
+      }
     } catch (error) {
       writeCommandError(error);
     }
