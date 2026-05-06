@@ -81,4 +81,45 @@ describe('createBackup', () => {
 
     await expect(readFile(kubeconfigPath, 'utf8')).resolves.toBe(originalContents);
   });
+
+  it('uses deterministic suffixes for same-second backup collisions', async () => {
+    const root = await tempDir();
+    const kubeconfigPath = path.join(root, 'config');
+    const backupDir = path.join(root, 'backups');
+    const originalContents = 'clusters:\n- name: original\n';
+    const changedContents = 'clusters:\n- name: changed\n';
+    const now = new Date('2026-05-06T14:30:12.999Z');
+
+    await writeFile(kubeconfigPath, originalContents, 'utf8');
+    const first = await createBackup({
+      kubeconfigPath,
+      backupDir,
+      operation: 'patch',
+      contexts: ['original'],
+      helperPath: '/opt/add-eks-token',
+      now,
+    });
+
+    await writeFile(kubeconfigPath, changedContents, 'utf8');
+    const second = await createBackup({
+      kubeconfigPath,
+      backupDir,
+      operation: 'patch',
+      contexts: ['changed'],
+      helperPath: '/opt/add-eks-token',
+      now,
+    });
+
+    expect(second.backupPath).toBe(
+      path.join(backupDir, 'config.20260506-143012.1.yaml'),
+    );
+    expect(first.backupPath).not.toBe(second.backupPath);
+    expect(first.metadataPath).not.toBe(second.metadataPath);
+    await expect(readFile(first.backupPath, 'utf8')).resolves.toBe(
+      originalContents,
+    );
+    await expect(readFile(second.backupPath, 'utf8')).resolves.toBe(
+      changedContents,
+    );
+  });
 });

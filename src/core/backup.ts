@@ -1,4 +1,5 @@
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export interface CreateBackupInput {
@@ -32,14 +33,7 @@ export async function createBackup(
   input: CreateBackupInput,
 ): Promise<CreateBackupResult> {
   const createdAt = input.now ?? new Date();
-  const backupPath = path.join(
-    input.backupDir,
-    backupFileName(input.kubeconfigPath, createdAt),
-  );
-  const metadataPath = `${backupPath}.metadata.json`;
-
   await mkdir(input.backupDir, { recursive: true });
-  await copyFile(input.kubeconfigPath, backupPath);
 
   const metadata: BackupMetadata = {
     createdAt: createdAt.toISOString(),
@@ -49,21 +43,56 @@ export async function createBackup(
     helperPath: input.helperPath,
   };
 
-  await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+  for (let suffix = 0; ; suffix += 1) {
+    const backupPath = path.join(
+      input.backupDir,
+      backupFileName(input.kubeconfigPath, createdAt, suffix),
+    );
+    const metadataPath = `${backupPath}.metadata.json`;
 
-  return { backupPath, metadataPath };
+    try {
+      await copyFile(input.kubeconfigPath, backupPath, constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (isErrorCode(error, 'EEXIST')) {
+        continue;
+      }
+
+      throw error;
+    }
+
+    try {
+      await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+    } catch (error) {
+      if (isErrorCode(error, 'EEXIST')) {
+        await unlink(backupPath);
+        continue;
+      }
+
+      throw error;
+    }
+
+    return { backupPath, metadataPath };
+  }
 }
 
 export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
   await copyFile(input.backupPath, input.kubeconfigPath);
 }
 
-function backupFileName(kubeconfigPath: string, now: Date): string {
+function backupFileName(
+  kubeconfigPath: string,
+  now: Date,
+  suffix: number,
+): string {
   const name = path.basename(kubeconfigPath);
   const extension = path.extname(name) || '.yaml';
   const basename = path.basename(name, path.extname(name));
+  const suffixSegment = suffix === 0 ? '' : `.${suffix}`;
 
-  return `${basename}.${formatTimestamp(now)}${extension}`;
+  return `${basename}.${formatTimestamp(now)}${suffixSegment}${extension}`;
 }
 
 function formatTimestamp(date: Date): string {
@@ -79,4 +108,12 @@ function formatTimestamp(date: Date): string {
 
 function pad(value: number): string {
   return value.toString().padStart(2, '0');
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === code
+  );
 }
