@@ -2,6 +2,13 @@
 import { Command } from 'commander';
 
 import { runCacheClear, runCacheList, runCacheStatus } from './commands/cache.js';
+import {
+  completeCandidates,
+  generateCompletionScript,
+  parseCompletionArgs,
+} from './commands/completion.js';
+import type { CompletionKind, CompletionShell } from './commands/completion.js';
+import { formatDoctorHuman, runDoctor } from './commands/doctor.js';
 import { runInteractive, runInteractiveEntrypoint } from './commands/interactive.js';
 import { runRestore } from './commands/restore.js';
 import { runRevert } from './commands/revert.js';
@@ -9,6 +16,8 @@ import { runUpdate } from './commands/update.js';
 import { name, version } from './index.js';
 
 const program = new Command();
+
+program.enablePositionalOptions();
 
 program
   .name(name)
@@ -28,6 +37,65 @@ program
       }
     } catch (error) {
       writeCommandError(error);
+    }
+  });
+
+program
+  .command('doctor')
+  .description('Check local add-eks, AWS CLI, kubectl, helper, cache, and kubeconfig setup.')
+  .option('--kubeconfig <path>', 'kubeconfig file to inspect')
+  .option('--helper-path <path>', 'expected token helper path')
+  .option('--cache-dir <path>', 'token cache directory to inspect')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: DoctorOptions) => {
+    try {
+      const result = await runDoctor(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else {
+        process.stdout.write(formatDoctorHuman(result));
+      }
+
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
+program
+  .command('completion <shell>')
+  .description('Print shell completion script for bash, zsh, or fish.')
+  .action((shell: string) => {
+    try {
+      if (!isCompletionShell(shell)) {
+        throw new Error("completion shell must be one of: bash, zsh, fish");
+      }
+
+      process.stdout.write(generateCompletionScript(shell, { binaryName: name }));
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
+program
+  .command('__complete <kind> [words...]', { hidden: true })
+  .description('Internal completion candidate endpoint.')
+  .allowUnknownOption(true)
+  .passThroughOptions()
+  .action(async (kind: string, words: string[] | undefined) => {
+    try {
+      if (!isCompletionKind(kind)) {
+        return;
+      }
+
+      const candidates = await completeCandidates(kind, parseCompletionArgs(words ?? []));
+      if (candidates.length > 0) {
+        process.stdout.write(`${candidates.join('\n')}\n`);
+      }
+    } catch {
+      // Completion should never make an interactive shell command noisy.
     }
   });
 
@@ -213,6 +281,7 @@ type UpdateOptions = Parameters<typeof runUpdate>[0];
 type RevertOptions = Parameters<typeof runRevert>[0];
 type RestoreOptions = Parameters<typeof runRestore>[0];
 type CacheOptions = Parameters<typeof runCacheList>[0];
+type DoctorOptions = Parameters<typeof runDoctor>[0];
 type CacheEntry = Awaited<ReturnType<typeof runCacheList>>['entries'][number];
 
 function collect(value: string, previous: string[]): string[] {
@@ -244,6 +313,20 @@ function writeCommandError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`Error: ${message}\n`);
   process.exitCode = 1;
+}
+
+function isCompletionShell(value: string): value is CompletionShell {
+  return value === 'bash' || value === 'zsh' || value === 'fish';
+}
+
+function isCompletionKind(value: string): value is CompletionKind {
+  return (
+    value === 'profiles' ||
+    value === 'contexts' ||
+    value === 'eks-contexts' ||
+    value === 'regions' ||
+    value === 'clusters'
+  );
 }
 
 await program.parseAsync(process.argv);
