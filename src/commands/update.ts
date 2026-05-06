@@ -90,10 +90,6 @@ export async function runUpdate(
     throw new Error('--yes is required for non-interactive updates');
   }
 
-  await (deps.installHelper ?? installHelper)({
-    helperPath: resolvedRuntimeOptions.helperPath,
-  });
-
   const backup =
     options.backup === false
       ? undefined
@@ -104,6 +100,10 @@ export async function runUpdate(
           contexts: patch.changedContexts,
           helperPath: resolvedRuntimeOptions.helperPath,
         });
+
+  await (deps.installHelper ?? installHelper)({
+    helperPath: resolvedRuntimeOptions.helperPath,
+  });
 
   await (deps.writeFileAtomic ?? writeFileAtomic)(
     kubeconfigPath,

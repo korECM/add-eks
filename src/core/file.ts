@@ -22,10 +22,26 @@ export async function writeFileAtomic(filePath: string, contents: string): Promi
     await rename(tempPath, filePath);
   } catch (error) {
     if (!closed) {
-      await handle.close();
+      await closeBestEffort(handle);
     }
-    await rm(tempPath, { force: true });
+    await removeBestEffort(tempPath);
     throw error;
+  }
+}
+
+async function closeBestEffort(handle: Awaited<ReturnType<typeof open>>): Promise<void> {
+  try {
+    await handle.close();
+  } catch {
+    // Preserve the original write or rename failure.
+  }
+}
+
+async function removeBestEffort(filePath: string): Promise<void> {
+  try {
+    await rm(filePath, { force: true });
+  } catch {
+    // Preserve the original write or rename failure.
   }
 }
 

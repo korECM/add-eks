@@ -139,6 +139,41 @@ describe('runUpdate', () => {
     await expect(readFile(path.join(backupDir, backupFile ?? ''), 'utf8')).resolves.toBe(original);
   });
 
+  it('does not install helper or write kubeconfig when backup fails', async () => {
+    const root = await tempDir();
+    const kubeconfig = await writeFixture(root);
+    const calls: string[] = [];
+    const backupError = new Error('backup failed');
+    const createBackup = vi.fn(async () => {
+      calls.push('backup');
+      throw backupError;
+    });
+    const installHelper = vi.fn(async () => {
+      calls.push('install');
+    });
+    const writeFileAtomic = vi.fn(async () => {
+      calls.push('write');
+    });
+
+    await expect(
+      runUpdate(
+        {
+          kubeconfig,
+          context: ['prod'],
+          helperPath: path.join(root, 'helper'),
+          cacheDir: path.join(root, 'cache'),
+          backupDir: path.join(root, 'backups'),
+          yes: true,
+        },
+        { home: root, createBackup, installHelper, writeFileAtomic },
+      ),
+    ).rejects.toThrow(backupError);
+
+    expect(calls).toEqual(['backup']);
+    expect(installHelper).not.toHaveBeenCalled();
+    expect(writeFileAtomic).not.toHaveBeenCalled();
+  });
+
   it('skips backup when requested', async () => {
     const root = await tempDir();
     const kubeconfig = await writeFixture(root);
