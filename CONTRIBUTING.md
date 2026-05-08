@@ -35,3 +35,31 @@ Include:
 - Summary of the change.
 - Test commands run.
 - Notes about compatibility or migration risks.
+
+## npm Release
+
+The npm package is published as `@eatingcookieman/add-eks`.
+
+Before publishing:
+
+```sh
+npm run typecheck
+npm test
+npm run build
+npm pack --dry-run
+```
+
+For a patch release:
+
+```sh
+npm version patch
+npm publish --access=public
+git push --follow-tags
+```
+
+Notes:
+
+- Scoped public packages require `--access=public`.
+- `npm publish` may require one-time-password or web authentication.
+- `npm pack --dry-run` should include `assets/add-eks-token.sh`, `dist/`, `README.md`, `README.ko.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `LICENSE`.
+- Do not publish a new version until the GitHub `main` branch contains the release commit.
