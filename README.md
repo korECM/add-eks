@@ -7,14 +7,14 @@ Friendly EKS kubeconfig setup with cached token support.
 ## Quick Start
 
 ```sh
-npx add-eks
+npx @eatingcookieman/add-eks
 ```
 
 For non-interactive use:
 
 ```sh
-npx add-eks update --context prod --profile prod --yes
-npx add-eks update --all --profile prod --yes
+npx @eatingcookieman/add-eks update --context prod --profile prod --yes
+npx @eatingcookieman/add-eks update --all --profile prod --yes
 ```
 
 ## Why

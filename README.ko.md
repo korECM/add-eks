@@ -7,14 +7,14 @@ EKS kubeconfig 등록과 업데이트를 더 편하게 하고, 토큰 캐시까�
 ## 빠른 시작
 
 ```sh
-npx add-eks
+npx @eatingcookieman/add-eks
 ```
 
 비대화식 실행:
 
 ```sh
-npx add-eks update --context prod --profile prod --yes
-npx add-eks update --all --profile prod --yes
+npx @eatingcookieman/add-eks update --context prod --profile prod --yes
+npx @eatingcookieman/add-eks update --all --profile prod --yes
 ```
 
 ## 목적

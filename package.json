@@ -1,5 +1,5 @@
 {
-  "name": "add-eks",
+  "name": "@eatingcookieman/add-eks",
   "version": "0.1.0",
   "description": "Friendly EKS kubeconfig setup with cached token support.",
   "license": "MIT",
