@@ -2,6 +2,24 @@
   "name": "add-eks",
   "version": "0.1.0",
   "description": "Friendly EKS kubeconfig setup with cached token support.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/korECM/add-eks.git"
+  },
+  "bugs": {
+    "url": "https://github.com/korECM/add-eks/issues"
+  },
+  "homepage": "https://github.com/korECM/add-eks#readme",
+  "keywords": [
+    "aws",
+    "eks",
+    "kubernetes",
+    "kubectl",
+    "kubeconfig",
+    "token-cache",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "add-eks": "./dist/cli.js"
