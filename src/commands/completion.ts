@@ -74,7 +74,8 @@ const REVERT_FLAGS = [
 ];
 const RESTORE_FLAGS = ['--backup', '--kubeconfig', '--yes', '--json'];
 const CACHE_FLAGS = ['--cache-dir', '--cluster', '--region', '--profile', '--yes', '--dry-run', '--json'];
-const STATS_FLAGS = ['--cache-dir', '--json', '--yes'];
+const STATS_SHOW_FLAGS = ['--cache-dir', '--json'];
+const STATS_CLEAR_FLAGS = ['--cache-dir', '--yes', '--json'];
 const DOCTOR_FLAGS = ['--kubeconfig', '--helper-path', '--cache-dir', '--json'];
 const COMPLETION_SHELLS: CompletionShell[] = ['bash', 'zsh', 'fish'];
 const COMMON_AWS_REGIONS = [
@@ -305,9 +306,11 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}()
       ;;
     stats)
       if [[ $cword -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "${STATS_COMMANDS.join(' ')} ${STATS_FLAGS.join(' ')}" -- "$cur") )
+        COMPREPLY=( $(compgen -W "${STATS_COMMANDS.join(' ')} ${STATS_SHOW_FLAGS.join(' ')}" -- "$cur") )
+      elif [[ \${words[2]} == "clear" ]]; then
+        COMPREPLY=( $(compgen -W "${STATS_CLEAR_FLAGS.join(' ')}" -- "$cur") )
       else
-        COMPREPLY=( $(compgen -W "${STATS_FLAGS.join(' ')}" -- "$cur") )
+        COMPREPLY=( $(compgen -W "${STATS_SHOW_FLAGS.join(' ')}" -- "$cur") )
       fi
       ;;
     update)
@@ -359,9 +362,11 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}() {
       ;;
     stats)
       if (( CURRENT == 3 )); then
-        compadd -- $stats_commands ${STATS_FLAGS.join(' ')}
+        compadd -- $stats_commands ${STATS_SHOW_FLAGS.join(' ')}
+      elif [[ "$words[3]" == "clear" ]]; then
+        compadd -- ${STATS_CLEAR_FLAGS.join(' ')}
       else
-        compadd -- ${STATS_FLAGS.join(' ')}
+        compadd -- ${STATS_SHOW_FLAGS.join(' ')}
       fi
       ;;
     update) compadd -- ${UPDATE_FLAGS.join(' ')} ;;
@@ -386,10 +391,24 @@ complete -c ${binaryName} -f -l profile -a "(${binaryName} __complete profiles (
 complete -c ${binaryName} -f -l context -a "(${binaryName} __complete contexts (commandline -opc))"
 complete -c ${binaryName} -f -l region -a "(${binaryName} __complete regions (commandline -opc))"
 complete -c ${binaryName} -f -l cluster -a "(${binaryName} __complete clusters (commandline -opc))"
-${[...new Set([...UPDATE_FLAGS, ...REVERT_FLAGS, ...RESTORE_FLAGS, ...CACHE_FLAGS, ...STATS_FLAGS, ...DOCTOR_FLAGS])]
-  .map((flag) => `complete -c ${binaryName} -l ${flag.slice(2)}`)
-  .join('\n')}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from update', UPDATE_FLAGS)}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from revert', REVERT_FLAGS)}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from restore', RESTORE_FLAGS)}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from cache', CACHE_FLAGS)}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from stats; and not __fish_seen_subcommand_from clear', STATS_SHOW_FLAGS)}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from stats; and __fish_seen_subcommand_from clear', STATS_CLEAR_FLAGS)}
+${fishFlagCompletions(binaryName, '__fish_seen_subcommand_from doctor', DOCTOR_FLAGS)}
 `;
+}
+
+function fishFlagCompletions(
+  binaryName: string,
+  condition: string,
+  flags: string[],
+): string {
+  return flags
+    .map((flag) => `complete -c ${binaryName} -f -n "${condition}" -l ${flag.slice(2)}`)
+    .join('\n');
 }
 
 function sortUnique(values: string[]): string[] {

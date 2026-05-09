@@ -97,17 +97,24 @@ describe('generateCompletionScript', () => {
     expect(script).toContain('completion');
   });
 
-  it('includes stats command flags and clear flags in generated scripts', () => {
+  it('scopes stats --yes completion to stats clear only', () => {
     const bash = generateCompletionScript('bash', { binaryName: 'add-eks' });
     const zsh = generateCompletionScript('zsh', { binaryName: 'add-eks' });
     const fish = generateCompletionScript('fish', { binaryName: 'add-eks' });
 
     expect(bash).toContain('stats clear');
-    expect(bash).toContain('--cache-dir --json --yes');
+    expect(bash).toContain('compgen -W "clear --cache-dir --json"');
+    expect(bash).toContain('compgen -W "--cache-dir --yes --json"');
     expect(zsh).toContain('stats_commands=(clear)');
-    expect(zsh).toContain('compadd -- $stats_commands --cache-dir --json --yes');
+    expect(zsh).toContain('compadd -- $stats_commands --cache-dir --json');
+    expect(zsh).toContain('compadd -- --cache-dir --yes --json');
     expect(fish).toContain('__fish_seen_subcommand_from stats');
-    expect(fish).toContain('complete -c add-eks -l yes');
+    expect(fish).toContain(
+      'complete -c add-eks -f -n "__fish_seen_subcommand_from stats; and not __fish_seen_subcommand_from clear" -l json',
+    );
+    expect(fish).toContain(
+      'complete -c add-eks -f -n "__fish_seen_subcommand_from stats; and __fish_seen_subcommand_from clear" -l yes',
+    );
   });
 
   it('filters bash dynamic candidates line by line without word splitting candidates', () => {
