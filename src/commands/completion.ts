@@ -38,10 +38,12 @@ const CORE_COMMANDS = [
   'revert',
   'restore',
   'cache',
+  'stats',
   'doctor',
   'completion',
 ];
 const CACHE_COMMANDS = ['list', 'status', 'clear'];
+const STATS_COMMANDS = ['clear'];
 const GLOBAL_FLAGS = ['--help', '--version'];
 const UPDATE_FLAGS = [
   '--kubeconfig',
@@ -72,6 +74,7 @@ const REVERT_FLAGS = [
 ];
 const RESTORE_FLAGS = ['--backup', '--kubeconfig', '--yes', '--json'];
 const CACHE_FLAGS = ['--cache-dir', '--cluster', '--region', '--profile', '--yes', '--dry-run', '--json'];
+const STATS_FLAGS = ['--cache-dir', '--json', '--yes'];
 const DOCTOR_FLAGS = ['--kubeconfig', '--helper-path', '--cache-dir', '--json'];
 const COMPLETION_SHELLS: CompletionShell[] = ['bash', 'zsh', 'fish'];
 const COMMON_AWS_REGIONS = [
@@ -266,6 +269,7 @@ function completionRegions(data: KubeconfigCompletionData): string[] {
 function generateBashCompletion(binaryName: string): string {
   return `# bash completion for ${binaryName}
 # commands: cache ${CACHE_COMMANDS.join(' ')}
+# commands: stats ${STATS_COMMANDS.join(' ')}
 _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}()
 {
   local cur prev words cword
@@ -299,6 +303,13 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}()
         COMPREPLY=( $(compgen -W "${CACHE_FLAGS.join(' ')}" -- "$cur") )
       fi
       ;;
+    stats)
+      if [[ $cword -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "${STATS_COMMANDS.join(' ')} ${STATS_FLAGS.join(' ')}" -- "$cur") )
+      else
+        COMPREPLY=( $(compgen -W "${STATS_FLAGS.join(' ')}" -- "$cur") )
+      fi
+      ;;
     update)
       COMPREPLY=( $(compgen -W "${UPDATE_FLAGS.join(' ')}" -- "$cur") )
       ;;
@@ -326,9 +337,10 @@ complete -F _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')} ${binaryName}
 function generateZshCompletion(binaryName: string): string {
   return `#compdef ${binaryName}
 _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}() {
-  local -a commands cache_commands flags
+  local -a commands cache_commands stats_commands flags
   commands=(${CORE_COMMANDS.join(' ')})
   cache_commands=(${CACHE_COMMANDS.join(' ')})
+  stats_commands=(${STATS_COMMANDS.join(' ')})
 
   case "$words[CURRENT-1]" in
     --profile) compadd -- \${(f)"$(${binaryName} __complete profiles "$words[@]")"}; return ;;
@@ -343,6 +355,13 @@ _${binaryName.replace(/[^A-Za-z0-9_]/g, '_')}() {
         compadd -- $cache_commands
       else
         compadd -- ${CACHE_FLAGS.join(' ')}
+      fi
+      ;;
+    stats)
+      if (( CURRENT == 3 )); then
+        compadd -- $stats_commands ${STATS_FLAGS.join(' ')}
+      else
+        compadd -- ${STATS_FLAGS.join(' ')}
       fi
       ;;
     update) compadd -- ${UPDATE_FLAGS.join(' ')} ;;
@@ -361,12 +380,13 @@ function generateFishCompletion(binaryName: string): string {
   return `# fish completion for ${binaryName}
 complete -c ${binaryName} -f -n "__fish_use_subcommand" -a "${CORE_COMMANDS.join(' ')}"
 complete -c ${binaryName} -f -n "__fish_seen_subcommand_from cache" -a "${CACHE_COMMANDS.join(' ')}"
+complete -c ${binaryName} -f -n "__fish_seen_subcommand_from stats" -a "${STATS_COMMANDS.join(' ')}"
 complete -c ${binaryName} -f -n "__fish_seen_subcommand_from completion" -a "${COMPLETION_SHELLS.join(' ')}"
 complete -c ${binaryName} -f -l profile -a "(${binaryName} __complete profiles (commandline -opc))"
 complete -c ${binaryName} -f -l context -a "(${binaryName} __complete contexts (commandline -opc))"
 complete -c ${binaryName} -f -l region -a "(${binaryName} __complete regions (commandline -opc))"
 complete -c ${binaryName} -f -l cluster -a "(${binaryName} __complete clusters (commandline -opc))"
-${[...new Set([...UPDATE_FLAGS, ...REVERT_FLAGS, ...RESTORE_FLAGS, ...CACHE_FLAGS, ...DOCTOR_FLAGS])]
+${[...new Set([...UPDATE_FLAGS, ...REVERT_FLAGS, ...RESTORE_FLAGS, ...CACHE_FLAGS, ...STATS_FLAGS, ...DOCTOR_FLAGS])]
   .map((flag) => `complete -c ${binaryName} -l ${flag.slice(2)}`)
   .join('\n')}
 `;

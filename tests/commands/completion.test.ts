@@ -92,8 +92,22 @@ describe('generateCompletionScript', () => {
     expect(script).toContain('--profile');
     expect(script).toContain('--context');
     expect(script).toContain('cache list status clear');
+    expect(script).toContain('stats clear');
     expect(script).toContain('doctor');
     expect(script).toContain('completion');
+  });
+
+  it('includes stats command flags and clear flags in generated scripts', () => {
+    const bash = generateCompletionScript('bash', { binaryName: 'add-eks' });
+    const zsh = generateCompletionScript('zsh', { binaryName: 'add-eks' });
+    const fish = generateCompletionScript('fish', { binaryName: 'add-eks' });
+
+    expect(bash).toContain('stats clear');
+    expect(bash).toContain('--cache-dir --json --yes');
+    expect(zsh).toContain('stats_commands=(clear)');
+    expect(zsh).toContain('compadd -- $stats_commands --cache-dir --json --yes');
+    expect(fish).toContain('__fish_seen_subcommand_from stats');
+    expect(fish).toContain('complete -c add-eks -l yes');
   });
 
   it('filters bash dynamic candidates line by line without word splitting candidates', () => {

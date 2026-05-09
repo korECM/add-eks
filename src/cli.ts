@@ -12,6 +12,7 @@ import { formatDoctorHuman, runDoctor } from './commands/doctor.js';
 import { runInteractive, runInteractiveEntrypoint } from './commands/interactive.js';
 import { runRestore } from './commands/restore.js';
 import { runRevert } from './commands/revert.js';
+import { formatStatsHuman, runStatsClear, runStatsShow } from './commands/stats.js';
 import { runUpdate } from './commands/update.js';
 import { name, version } from './index.js';
 
@@ -183,6 +184,47 @@ program
     }
   });
 
+const statsCommand = program
+  .command('stats')
+  .description('Show add-eks token cache statistics.')
+  .option('--cache-dir <path>', 'token cache directory to inspect')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: StatsOptions) => {
+    try {
+      const result = await runStatsShow(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      process.stdout.write(formatStatsHuman(result));
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
+statsCommand
+  .command('clear')
+  .description('Clear add-eks token cache statistics.')
+  .option('--cache-dir <path>', 'token cache directory to clear stats from')
+  .option('--yes', 'confirm stats deletion')
+  .option('--json', 'print machine-readable JSON output')
+  .action(async (options: StatsOptions) => {
+    try {
+      const result = await runStatsClear(options);
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+
+      process.stdout.write(
+        result.deleted ? 'Deleted stats.\n' : 'No stats file found.\n',
+      );
+    } catch (error) {
+      writeCommandError(error);
+    }
+  });
+
 const cacheCommand = program
   .command('cache')
   .description('Inspect and clear cached EKS ExecCredential files.');
@@ -282,6 +324,7 @@ type RevertOptions = Parameters<typeof runRevert>[0];
 type RestoreOptions = Parameters<typeof runRestore>[0];
 type CacheOptions = Parameters<typeof runCacheList>[0];
 type DoctorOptions = Parameters<typeof runDoctor>[0];
+type StatsOptions = Parameters<typeof runStatsShow>[0];
 type CacheEntry = Awaited<ReturnType<typeof runCacheList>>['entries'][number];
 
 function collect(value: string, previous: string[]): string[] {
