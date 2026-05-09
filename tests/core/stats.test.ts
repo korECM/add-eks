@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTimeComparisons,
   clearStats,
   formatDuration,
   readStats,
@@ -109,6 +110,30 @@ describe('stats core utilities', () => {
     expect(formatDuration(59_999)).toBe('1m');
     expect(formatDuration(3_599_999)).toBe('1h');
     expect(formatDuration(3_659_999)).toBe('1h 1m');
+  });
+
+  it('builds deterministic small saved-time comparisons', () => {
+    expect(buildTimeComparisons(252_000)).toEqual([
+      { label: 'Instant ramen timers', value: '1.4' },
+      { label: 'Songs', value: '1.2' },
+      { label: 'Loading spinners', value: '5.6' },
+    ]);
+  });
+
+  it('builds deterministic medium saved-time comparisons', () => {
+    expect(buildTimeComparisons(1_800_000)).toEqual([
+      { label: 'PR reviews', value: '2' },
+      { label: 'Power naps', value: '1.5' },
+      { label: 'Docs lines read', value: '500' },
+    ]);
+  });
+
+  it('builds deterministic large saved-time comparisons', () => {
+    expect(buildTimeComparisons(57_600_000)).toEqual([
+      { label: 'Workdays', value: '2' },
+      { label: 'Technical book pages', value: '640' },
+      { label: 'Side-project evenings', value: '5.3' },
+    ]);
   });
 
   it('clears stats when present', async () => {

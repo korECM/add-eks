@@ -2,12 +2,18 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  buildTimeComparisons,
   clearStats,
   formatDuration,
   readStats,
   summarizeStats,
 } from '../core/stats.js';
-import type { ClearStatsResult, Stats, StatsSummary } from '../core/stats.js';
+import type {
+  ClearStatsResult,
+  Stats,
+  StatsComparison,
+  StatsSummary,
+} from '../core/stats.js';
 import { defaultPaths, resolveHomePath } from '../core/paths.js';
 
 export interface StatsCommandOptions {
@@ -18,11 +24,6 @@ export interface StatsCommandOptions {
 
 export interface StatsCommandDeps {
   home?: string;
-}
-
-export interface StatsComparison {
-  label: string;
-  value: string;
 }
 
 export interface StatsShowResult {
@@ -42,12 +43,13 @@ export async function runStatsShow(
 ): Promise<StatsShowResult> {
   const cacheDir = resolveCacheDir(options, deps);
   const stats = await readStats(cacheDir);
+  const summary = summarizeStats(stats);
 
   return {
     cacheDir,
     stats,
-    summary: summarizeStats(stats),
-    comparisons: [],
+    summary,
+    comparisons: buildTimeComparisons(summary.estimatedSavedMs),
   };
 }
 

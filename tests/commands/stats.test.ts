@@ -82,7 +82,11 @@ describe('stats command handlers', () => {
         averageAwsMs: 6600,
         topCluster: 'prod',
       },
-      comparisons: [],
+      comparisons: [
+        { label: 'Instant ramen timers', value: '1.4' },
+        { label: 'Songs', value: '1.2' },
+        { label: 'Loading spinners', value: '5.6' },
+      ],
     });
   });
 
@@ -117,6 +121,10 @@ describe('stats command handlers', () => {
       'Top cluster: prod',
     ]);
     expect(output).toContain('kubectl quietly handed you 4m 12s back.');
+    expect(output).toContain('In other units:');
+    expect(output).toContain('Instant ramen timers: 1.4');
+    expect(output).toContain('Songs: 1.2');
+    expect(output).toContain('Loading spinners: 5.6');
   });
 
   it('requires --yes before clearing stats', async () => {

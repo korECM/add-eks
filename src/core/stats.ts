@@ -38,6 +38,11 @@ export interface StatsSummary extends StatsTotals {
   topCluster?: string;
 }
 
+export interface StatsComparison {
+  label: string;
+  value: string;
+}
+
 export interface ClearStatsResult {
   deleted: boolean;
 }
@@ -101,6 +106,27 @@ export function formatDuration(ms: number): string {
   }
 
   return parts.join(' ');
+}
+
+export function buildTimeComparisons(savedMs: number): StatsComparison[] {
+  const safeSavedMs = Number.isFinite(savedMs) ? Math.max(0, savedMs) : 0;
+  if (safeSavedMs === 0) {
+    return [];
+  }
+
+  const bucket =
+    safeSavedMs >= TIME_UNITS.workday.ms
+      ? largeTimeUnits
+      : safeSavedMs >= TIME_UNITS.prReview.ms
+        ? mediumTimeUnits
+        : smallTimeUnits;
+
+  return bucket
+    .slice(0, 3)
+    .map((unit) => ({
+      label: unit.label,
+      value: formatComparisonValue(safeSavedMs / unit.ms),
+    }));
 }
 
 export async function clearStats(cacheDir: string): Promise<ClearStatsResult> {
@@ -229,6 +255,51 @@ function formatSeconds(seconds: number): string {
   }
 
   return seconds.toFixed(1).replace(/\.0$/, '');
+}
+
+const TIME_UNITS = {
+  instantRamenTimer: { label: 'Instant ramen timers', ms: 180_000 },
+  song: { label: 'Songs', ms: 210_000 },
+  loadingSpinner: { label: 'Loading spinners', ms: 45_000 },
+  ciStare: { label: 'CI stares', ms: 240_000 },
+  prReview: { label: 'PR reviews', ms: 900_000 },
+  powerNap: { label: 'Power naps', ms: 1_200_000 },
+  docsLine: { label: 'Docs lines read', ms: 3_600 },
+  workday: { label: 'Workdays', ms: 28_800_000 },
+  technicalBookPage: { label: 'Technical book pages', ms: 90_000 },
+  sideProjectEvening: { label: 'Side-project evenings', ms: 10_800_000 },
+} as const;
+
+const smallTimeUnits = [
+  TIME_UNITS.instantRamenTimer,
+  TIME_UNITS.song,
+  TIME_UNITS.loadingSpinner,
+  TIME_UNITS.ciStare,
+];
+
+const mediumTimeUnits = [
+  TIME_UNITS.prReview,
+  TIME_UNITS.powerNap,
+  TIME_UNITS.docsLine,
+  TIME_UNITS.ciStare,
+];
+
+const largeTimeUnits = [
+  TIME_UNITS.workday,
+  TIME_UNITS.technicalBookPage,
+  TIME_UNITS.sideProjectEvening,
+];
+
+function formatComparisonValue(value: number): string {
+  if (value < 0.1) {
+    return '<0.1';
+  }
+
+  if (value >= 10 || Number.isInteger(value)) {
+    return String(Math.round(value));
+  }
+
+  return value.toFixed(1).replace(/\.0$/, '');
 }
 
 function numberOrZero(value: unknown): number {
