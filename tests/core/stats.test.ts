@@ -105,6 +105,12 @@ describe('stats core utilities', () => {
     expect(formatDuration(3_726_000)).toBe('1h 2m 6s');
   });
 
+  it('carries rounded seconds across minute and hour boundaries', () => {
+    expect(formatDuration(59_999)).toBe('1m');
+    expect(formatDuration(3_599_999)).toBe('1h');
+    expect(formatDuration(3_659_999)).toBe('1h 1m');
+  });
+
   it('clears stats when present', async () => {
     const cacheDir = await tempDir();
     await mkdir(cacheDir, { recursive: true });

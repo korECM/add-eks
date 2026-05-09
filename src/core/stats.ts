@@ -84,7 +84,7 @@ export function summarizeStats(stats: Stats): StatsSummary {
 }
 
 export function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, ms) / 1000;
+  const totalSeconds = Math.round((Math.max(0, ms) / 1000) * 10) / 10;
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds - hours * 3600 - minutes * 60;
@@ -93,7 +93,7 @@ export function formatDuration(ms: number): string {
   if (hours > 0) {
     parts.push(`${hours}h`);
   }
-  if (minutes > 0 || hours > 0) {
+  if (minutes > 0 || (hours > 0 && seconds > 0)) {
     parts.push(`${minutes}m`);
   }
   if (seconds > 0 || parts.length === 0) {
