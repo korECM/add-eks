@@ -13,7 +13,6 @@ import type { EksContextDetection } from '../kubeconfig/types.js';
 import { runUpdate } from './update.js';
 import type { UpdateOptions, UpdateResult } from './update.js';
 
-type InteractiveAction = 'update-existing';
 type ApplyMode = 'apply' | 'dry-run';
 
 export interface InteractiveOptions extends RuntimeOptionFlags {
@@ -100,16 +99,6 @@ export async function runInteractive(
   }
 
   const region = await promptForRegion(prompts, detections);
-  const action = await prompts.select<InteractiveAction>({
-    message: 'Choose action',
-    choices: [{ name: 'Update existing EKS contexts', value: 'update-existing' }],
-    default: 'update-existing',
-  });
-
-  if (action !== 'update-existing') {
-    throw new Error(`Unsupported interactive action: ${action}`);
-  }
-
   const selectableContexts = detections.filter((detection) => detection.region === region);
   if (selectableContexts.length === 0) {
     throw new Error(`No detectable EKS contexts found for region '${region}'`);

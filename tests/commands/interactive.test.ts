@@ -58,8 +58,7 @@ describe('runInteractive', () => {
       select: vi
         .fn()
         .mockResolvedValueOnce('prod')
-        .mockResolvedValueOnce('ap-northeast-2')
-        .mockResolvedValueOnce('update-existing'),
+        .mockResolvedValueOnce('ap-northeast-2'),
       checkbox: vi.fn().mockResolvedValueOnce(['prod']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(true),
@@ -102,8 +101,7 @@ describe('runInteractive', () => {
       select: vi
         .fn()
         .mockResolvedValueOnce('default')
-        .mockResolvedValueOnce('us-west-2')
-        .mockResolvedValueOnce('update-existing'),
+        .mockResolvedValueOnce('us-west-2'),
       checkbox: vi.fn().mockResolvedValueOnce(['stage']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(false),
@@ -139,8 +137,7 @@ describe('runInteractive', () => {
       select: vi
         .fn()
         .mockResolvedValueOnce('prod')
-        .mockResolvedValueOnce('ap-northeast-2')
-        .mockResolvedValueOnce('update-existing'),
+        .mockResolvedValueOnce('ap-northeast-2'),
       checkbox: vi.fn().mockResolvedValueOnce(['prod']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(false),
@@ -172,6 +169,46 @@ describe('runInteractive', () => {
       }),
     );
     expect(prompts.input).not.toHaveBeenCalled();
+  });
+
+  it('goes directly from region selection to context selection', async () => {
+    const root = await tempDir();
+    const kubeconfig = path.join(root, 'config');
+    await writeFile(kubeconfig, fixture(), 'utf8');
+
+    const prompts = {
+      select: vi
+        .fn()
+        .mockResolvedValueOnce('prod')
+        .mockResolvedValueOnce('ap-northeast-2'),
+      checkbox: vi.fn().mockResolvedValueOnce(['prod']),
+      input: vi.fn(),
+      confirm: vi.fn().mockResolvedValueOnce(false),
+    };
+
+    await runInteractive(
+      { kubeconfig },
+      {
+        home: root,
+        prompts,
+        discoverProfiles: async () => ['prod'],
+        runUpdate: vi.fn(async () => ({
+          kubeconfigPath: kubeconfig,
+          changedContexts: ['prod'],
+          dryRun: true,
+          installedHelper: false,
+          wroteKubeconfig: false,
+        })),
+      },
+    );
+
+    expect(prompts.select).toHaveBeenCalledTimes(2);
+    expect(prompts.select).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Choose action' }),
+    );
+    expect(prompts.checkbox).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Select EKS contexts to update' }),
+    );
   });
 });
 
