@@ -158,6 +158,35 @@ describe('cache core utilities', () => {
     expect(status.entries).toHaveLength(2);
   });
 
+  it('excludes stats sidecars from cache list and status summaries', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      execCredential('2999-01-01T00:00:00Z'),
+    );
+    await writeStats(cacheDir);
+    await writeCacheFile(cacheDir, '.add-eks-stats.json.broken', '{broken');
+    await writeCacheFile(cacheDir, '.add-eks-stats.json.malformed', 'not-json');
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+
+    const entries = await listCacheEntries(cacheDir);
+    const status = await readCacheStatus(cacheDir);
+
+    expect(entries.map((entry) => entry.name)).toEqual([
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+    ]);
+    expect(status).toMatchObject({
+      cacheDir,
+      totalEntries: 1,
+      counts: { valid: 1 },
+    });
+    expect(status.entries.map((entry) => entry.name)).toEqual([
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+    ]);
+  });
+
   it('clears all helper cache files while skipping non-cache files', async () => {
     const root = await tempDir();
     const cacheDir = path.join(root, 'cache');
@@ -181,6 +210,34 @@ describe('cache core utilities', () => {
       'broken.json',
       'note.txt',
       'settings.json',
+    ]);
+  });
+
+  it('does not clear stats sidecars or count them as skipped cache entries', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      execCredential('2999-01-01T00:00:00Z'),
+    );
+    await writeStats(cacheDir);
+    await writeCacheFile(cacheDir, '.add-eks-stats.json.broken', '{broken');
+    await writeCacheFile(cacheDir, '.add-eks-stats.json.malformed', 'not-json');
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+
+    const result = await clearCacheEntries(cacheDir, {});
+
+    expect(result).toMatchObject({
+      deletedCount: 1,
+      skippedCount: 0,
+      dryRun: false,
+    });
+    expect((await readdir(cacheDir)).sort()).toEqual([
+      '.add-eks-stats.json',
+      '.add-eks-stats.json.broken',
+      '.add-eks-stats.json.lock',
+      '.add-eks-stats.json.malformed',
     ]);
   });
 
@@ -343,6 +400,8 @@ describe('cache command handlers', () => {
     expect(stdout).toContain(
       'Stats: 38 hits, about 4m 12s saved. Run `add-eks stats` for details.\n',
     );
+    expect(stdout).toContain('Entries: 1\n');
+    expect(stdout).not.toContain('unknown: 1');
   });
 
   it('includes the compact stats pointer in json cache status output', async () => {

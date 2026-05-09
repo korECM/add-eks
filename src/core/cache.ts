@@ -1,6 +1,14 @@
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
+const STATS_FILE_NAME = '.add-eks-stats.json';
+const STATS_SIDECAR_NAMES = new Set([
+  STATS_FILE_NAME,
+  `${STATS_FILE_NAME}.broken`,
+  `${STATS_FILE_NAME}.malformed`,
+  `${STATS_FILE_NAME}.lock`,
+]);
+
 export type CacheEntryStatus =
   | 'valid'
   | 'expired'
@@ -78,7 +86,9 @@ export async function listCacheEntries(cacheDir: string): Promise<CacheEntry[]> 
   }
 
   const entries = await Promise.all(
-    names.map((name) => readCacheEntry(path.join(cacheDir, name), name)),
+    names
+      .filter((name) => !isStatsSidecarName(name))
+      .map((name) => readCacheEntry(path.join(cacheDir, name), name)),
   );
 
   return entries.sort((left, right) => left.name.localeCompare(right.name));
@@ -390,6 +400,10 @@ function metadataFromName(name: string): CacheMetadata {
 
 function safeName(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
+function isStatsSidecarName(name: string): boolean {
+  return STATS_SIDECAR_NAMES.has(name);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
