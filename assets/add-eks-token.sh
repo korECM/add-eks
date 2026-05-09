@@ -250,27 +250,27 @@ stats_file_is_valid() {
       next
     }
     state == 2 {
-      if ($0 != "\"version\":1,") fail()
+      if ($0 != "\"schemaVersion\":1,") fail()
       state = 3
       next
     }
     state == 3 {
-      if ($0 !~ /^"hits":[0-9]+,$/) fail()
+      if ($0 != "\"totals\":{") fail()
       state = 4
       next
     }
     state == 4 {
-      if ($0 !~ /^"misses":[0-9]+,$/) fail()
+      if ($0 !~ /^"hits":[0-9]+,$/) fail()
       state = 5
       next
     }
     state == 5 {
-      if ($0 !~ /^"awsCalls":[0-9]+,$/) fail()
+      if ($0 !~ /^"misses":[0-9]+,$/) fail()
       state = 6
       next
     }
     state == 6 {
-      if ($0 !~ /^"actualAwsMsTotal":[0-9]+,$/) fail()
+      if ($0 !~ /^"awsCalls":[0-9]+,$/) fail()
       state = 7
       next
     }
@@ -280,20 +280,13 @@ stats_file_is_valid() {
       next
     }
     state == 8 {
-      if ($0 != "\"recent\":[") fail()
+      if ($0 !~ /^"actualAwsMsTotal":[0-9]+$/) fail()
       state = 9
       next
     }
-    state == 9 && $0 == "]," {
-      if (recent_count > 0 && recent_comma == 1) fail()
-      state = 10
-      next
-    }
     state == 9 {
-      if (recent_count > 0 && recent_comma == 0) fail()
-      if ($0 !~ /^[{]"type":"(hit|miss)","cluster":"[A-Za-z0-9._-]+","(actualAwsMs|estimatedSavedMs)":[0-9]+[}],?$/) fail()
-      recent_count++
-      recent_comma = ($0 ~ /,$/) ? 1 : 0
+      if ($0 != "},") fail()
+      state = 10
       next
     }
     state == 10 {
@@ -301,28 +294,45 @@ stats_file_is_valid() {
       state = 11
       next
     }
-    state == 11 && $0 == "}" {
+    state == 11 && $0 == "}," {
       if (bucket_count > 0 && bucket_comma == 1) fail()
-      state = 12
+      state = 13
       next
     }
     state == 11 {
       if (bucket_count > 0 && bucket_comma == 0) fail()
-      if ($0 !~ /^"[A-Za-z0-9._-]+":[{]"hits":[0-9]+,"misses":[0-9]+,"awsCalls":[0-9]+,"actualAwsMsTotal":[0-9]+,"estimatedSavedMs":[0-9]+[}],?$/) fail()
+      if ($0 !~ /^"[A-Za-z0-9._-]+":[{]"hits":[0-9]+,"misses":[0-9]+,"estimatedSavedMs":[0-9]+[}],?$/) fail()
       bucket_count++
       bucket_comma = ($0 ~ /,$/) ? 1 : 0
       next
     }
-    state == 12 {
+    state == 13 {
+      if ($0 != "\"recent\":[") fail()
+      state = 14
+      next
+    }
+    state == 14 && $0 == "]" {
+      if (recent_count > 0 && recent_comma == 1) fail()
+      state = 15
+      next
+    }
+    state == 14 {
+      if (recent_count > 0 && recent_comma == 0) fail()
+      if ($0 !~ /^[{]"type":"(hit|miss)","cluster":"[A-Za-z0-9._-]+","(actualAwsMs|estimatedSavedMs)":[0-9]+[}],?$/) fail()
+      recent_count++
+      recent_comma = ($0 ~ /,$/) ? 1 : 0
+      next
+    }
+    state == 15 {
       if ($0 != "}") fail()
-      state = 13
+      state = 16
       next
     }
     {
       fail()
     }
     END {
-      if (state != 13) {
+      if (state != 16) {
         exit 1
       }
     }
@@ -333,6 +343,8 @@ record_stats() {
   stats_type=$1
   stats_actual_ms=${2:-0}
   stats_file=$cache_dir/.add-eks-stats.json
+  stats_lock=$stats_file.lock
+  stats_tmp=$stats_file.$$.tmp
   stats_input=/dev/null
   stats_bucket=$(stats_bucket_key)
 
@@ -340,18 +352,25 @@ record_stats() {
     ''|*[!0-9]*) stats_actual_ms=0 ;;
   esac
 
+  if ! mkdir "$stats_lock" 2>/dev/null; then
+    debug 'stats update skipped: stats lock busy'
+    return 0
+  fi
+  trap 'rm -f "$stats_tmp" 2>/dev/null; rmdir "$stats_lock" 2>/dev/null' HUP INT TERM EXIT
+
   if [ -f "$stats_file" ]; then
     if stats_file_is_valid "$stats_file"; then
       stats_input=$stats_file
     else
-      if ! mv "$stats_file" "$stats_file.malformed.$$" 2>/dev/null; then
+      if ! mv -f "$stats_file" "$stats_file.malformed" 2>/dev/null; then
         debug 'stats update skipped: failed to move malformed stats file aside'
+        rmdir "$stats_lock" 2>/dev/null
+        trap - HUP INT TERM EXIT
         return 0
       fi
     fi
   fi
 
-  stats_tmp=$stats_file.$$.tmp
   if ! awk -v event="$stats_type" -v actual_ms="$stats_actual_ms" -v bucket="$stats_bucket" '
     BEGIN {
       hits = 0
@@ -377,13 +396,15 @@ record_stats() {
       sub(",$", "", line)
       return line
     }
-    /^"hits":/ { hits = number_field($0, "hits") }
-    /^"misses":/ { misses = number_field($0, "misses") }
-    /^"awsCalls":/ { aws_calls = number_field($0, "awsCalls") }
-    /^"actualAwsMsTotal":/ { actual_total = number_field($0, "actualAwsMsTotal") }
-    /^"estimatedSavedMs":/ { estimated_total = number_field($0, "estimatedSavedMs") }
+    /^"totals":\{/ { in_totals = 1; next }
+    in_totals && /^\},/ { in_totals = 0; next }
+    in_totals && /^"hits":/ { hits = number_field($0, "hits") }
+    in_totals && /^"misses":/ { misses = number_field($0, "misses") }
+    in_totals && /^"awsCalls":/ { aws_calls = number_field($0, "awsCalls") }
+    in_totals && /^"actualAwsMsTotal":/ { actual_total = number_field($0, "actualAwsMsTotal") }
+    in_totals && /^"estimatedSavedMs":/ { estimated_total = number_field($0, "estimatedSavedMs") }
     /^"recent":\[/ { in_recent = 1; next }
-    in_recent && /^\],/ { in_recent = 0; next }
+    in_recent && /^\]/ { in_recent = 0; next }
     in_recent {
       recent[++recent_count] = clean_recent($0)
       next
@@ -401,8 +422,6 @@ record_stats() {
       }
       bucket_hits[key] = number_field(line, "hits")
       bucket_misses[key] = number_field(line, "misses")
-      bucket_aws_calls[key] = number_field(line, "awsCalls")
-      bucket_actual_total[key] = number_field(line, "actualAwsMsTotal")
       bucket_estimated_total[key] = number_field(line, "estimatedSavedMs")
     }
     END {
@@ -419,8 +438,6 @@ record_stats() {
         actual_total += actual_ms
         new_recent = "{\"type\":\"miss\",\"cluster\":\"" bucket "\",\"actualAwsMs\":" actual_ms "}"
         bucket_misses[bucket]++
-        bucket_aws_calls[bucket]++
-        bucket_actual_total[bucket] += actual_ms
       }
 
       recent[++recent_count] = new_recent
@@ -441,8 +458,6 @@ record_stats() {
         delete bucket_seen[delete_key]
         delete bucket_hits[delete_key]
         delete bucket_misses[delete_key]
-        delete bucket_aws_calls[delete_key]
-        delete bucket_actual_total[delete_key]
         delete bucket_estimated_total[delete_key]
         for (i = 1; i < bucket_count; i++) {
           bucket_order[i] = bucket_order[i + 1]
@@ -452,18 +467,14 @@ record_stats() {
       }
 
       print "{"
-      print "\"version\":1,"
+      print "\"schemaVersion\":1,"
+      print "\"totals\":{"
       print "\"hits\":" hits ","
       print "\"misses\":" misses ","
       print "\"awsCalls\":" aws_calls ","
-      print "\"actualAwsMsTotal\":" actual_total ","
       print "\"estimatedSavedMs\":" estimated_total ","
-      print "\"recent\":["
-      for (i = 1; i <= recent_count; i++) {
-        suffix = i < recent_count ? "," : ""
-        print recent[i] suffix
-      }
-      print "],"
+      print "\"actualAwsMsTotal\":" actual_total
+      print "},"
       print "\"byCluster\":{"
       written = 0
       for (i = 1; i <= bucket_count; i++) {
@@ -473,27 +484,41 @@ record_stats() {
         }
         written++
         suffix = written < bucket_count ? "," : ""
-        print "\"" key "\":{\"hits\":" bucket_hits[key] + 0 ",\"misses\":" bucket_misses[key] + 0 ",\"awsCalls\":" bucket_aws_calls[key] + 0 ",\"actualAwsMsTotal\":" bucket_actual_total[key] + 0 ",\"estimatedSavedMs\":" bucket_estimated_total[key] + 0 "}" suffix
+        print "\"" key "\":{\"hits\":" bucket_hits[key] + 0 ",\"misses\":" bucket_misses[key] + 0 ",\"estimatedSavedMs\":" bucket_estimated_total[key] + 0 "}" suffix
       }
-      print "}"
+      print "},"
+      print "\"recent\":["
+      for (i = 1; i <= recent_count; i++) {
+        suffix = i < recent_count ? "," : ""
+        print recent[i] suffix
+      }
+      print "]"
       print "}"
     }
   ' "$stats_input" 2>/dev/null > "$stats_tmp"; then
     debug 'stats update skipped: failed to write temporary stats file'
     rm -f "$stats_tmp" 2>/dev/null
+    rmdir "$stats_lock" 2>/dev/null
+    trap - HUP INT TERM EXIT
     return 0
   fi
 
   if ! chmod 600 "$stats_tmp" 2>/dev/null; then
     debug 'stats update skipped: failed to set stats file mode'
     rm -f "$stats_tmp" 2>/dev/null
+    rmdir "$stats_lock" 2>/dev/null
+    trap - HUP INT TERM EXIT
     return 0
   fi
   if ! mv "$stats_tmp" "$stats_file" 2>/dev/null; then
     debug 'stats update skipped: failed to replace stats file'
     rm -f "$stats_tmp" 2>/dev/null
+    rmdir "$stats_lock" 2>/dev/null
+    trap - HUP INT TERM EXIT
     return 0
   fi
+  rmdir "$stats_lock" 2>/dev/null
+  trap - HUP INT TERM EXIT
 }
 
 read_cache_if_fresh() {

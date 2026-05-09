@@ -14,6 +14,8 @@ import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { readStats, summarizeStats } from '../../src/core/stats.js';
+
 const execFileAsync = promisify(execFile);
 const helperPath = new URL('../../assets/add-eks-token.sh', import.meta.url);
 
@@ -163,14 +165,14 @@ describe('add-eks-token POSIX helper', () => {
     expect(secondJson).toEqual(firstJson);
     expect(second.stderr).toBe('');
 
-    const stats = JSON.parse(
-      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
-    );
-    expect(stats.hits).toBe(1);
-    expect(stats.misses).toBe(1);
-    expect(stats.awsCalls).toBe(1);
-    expect(stats.actualAwsMsTotal).toBeGreaterThanOrEqual(0);
-    expect(stats.estimatedSavedMs).toBeGreaterThanOrEqual(0);
+    const stats = await readStats(cacheDir);
+    const summary = summarizeStats(stats);
+    expect(stats.schemaVersion).toBe(1);
+    expect(summary.hits).toBe(1);
+    expect(summary.misses).toBe(1);
+    expect(summary.awsCalls).toBe(1);
+    expect(summary.actualAwsMsTotal).toBeGreaterThanOrEqual(0);
+    expect(summary.estimatedSavedMs).toBeGreaterThanOrEqual(0);
     expect(stats.recent).toHaveLength(2);
     expect(stats.recent[0]).toMatchObject({ type: 'miss' });
     expect(stats.recent[0].actualAwsMs).toBeGreaterThanOrEqual(0);
@@ -180,19 +182,45 @@ describe('add-eks-token POSIX helper', () => {
     const buckets = Object.values(stats.byCluster) as Array<{
       hits: number;
       misses: number;
-      awsCalls: number;
-      actualAwsMsTotal: number;
       estimatedSavedMs: number;
     }>;
     expect(buckets).toHaveLength(1);
     expect(buckets[0]).toMatchObject({
       hits: 1,
       misses: 1,
-      awsCalls: 1,
     });
-    expect(buckets[0].actualAwsMsTotal).toBeGreaterThanOrEqual(0);
     expect(buckets[0].estimatedSavedMs).toBeGreaterThanOrEqual(0);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
+  });
+
+  it('writes stats that the app stats reader summarizes', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath, debug: false });
+    const args = baseArgs(cacheDir);
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+
+    expect(JSON.parse(first.stdout).status.token).toBe('token-1');
+    expect(JSON.parse(second.stdout).status.token).toBe('token-1');
+    expect(first.stderr).toBe('');
+    expect(second.stderr).toBe('');
+
+    const stats = await readStats(cacheDir);
+    const summary = summarizeStats(stats);
+    expect(summary.hits).toBe(1);
+    expect(summary.misses).toBe(1);
+    expect(summary.awsCalls).toBe(1);
+    expect(summary.estimatedSavedMs).toBeGreaterThanOrEqual(0);
+    expect(Object.values(stats.byCluster)[0]).toMatchObject({
+      hits: 1,
+      misses: 1,
+    });
   });
 
   it('moves malformed stats file aside and recreates it', async () => {
@@ -214,15 +242,11 @@ describe('add-eks-token POSIX helper', () => {
 
     const entries = await readdir(cacheDir);
     expect(entries).toContain('.add-eks-stats.json');
-    expect(entries.some((entry) => entry.startsWith('.add-eks-stats.json.malformed.'))).toBe(
-      true,
-    );
+    expect(entries).toContain('.add-eks-stats.json.malformed');
 
-    const stats = JSON.parse(
-      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
-    );
-    expect(stats.misses).toBe(1);
-    expect(stats.awsCalls).toBe(1);
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(1);
+    expect(stats.totals.awsCalls).toBe(1);
     expect(stats.recent).toHaveLength(1);
     expect(stats.recent[0]).toMatchObject({ type: 'miss' });
   });
@@ -238,16 +262,18 @@ describe('add-eks-token POSIX helper', () => {
     await writeFile(
       path.join(cacheDir, '.add-eks-stats.json'),
       `{
-"version":1,
+"schemaVersion":1,
+"totals":{
 "hits":41,
 "misses":41,
 "awsCalls":41,
-"actualAwsMsTotal":41000,
 "estimatedSavedMs":0,
-"recent":[
-],
+"actualAwsMsTotal":41000
+},
 "byCluster":{
-}
+},
+"recent":[
+]
 not-json
 `,
       'utf8',
@@ -262,18 +288,44 @@ not-json
 
     const entries = await readdir(cacheDir);
     expect(entries).toContain('.add-eks-stats.json');
-    expect(entries.some((entry) => entry.startsWith('.add-eks-stats.json.malformed.'))).toBe(
-      true,
-    );
+    expect(entries).toContain('.add-eks-stats.json.malformed');
 
-    const stats = JSON.parse(
-      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
-    );
-    expect(stats.hits).toBe(0);
-    expect(stats.misses).toBe(1);
-    expect(stats.awsCalls).toBe(1);
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.hits).toBe(0);
+    expect(stats.totals.misses).toBe(1);
+    expect(stats.totals.awsCalls).toBe(1);
     expect(stats.recent).toHaveLength(1);
     expect(stats.recent[0]).toMatchObject({ type: 'miss' });
+  });
+
+  it('bounds malformed stats sidecars across repeated recoveries', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(cacheDir);
+
+    const env = testEnv({ binDir, callsPath, debug: false });
+    for (let index = 0; index < 3; index += 1) {
+      await writeFile(path.join(cacheDir, '.add-eks-stats.json'), 'not-json\n', 'utf8');
+      const result = await execFileAsync(
+        '/bin/sh',
+        [
+          helperPath.pathname,
+          ...baseArgs(cacheDir, ['--cluster', `broken-${index}`, '--cache-key', 'cluster']),
+        ],
+        { env },
+      );
+      expect(JSON.parse(result.stdout).status.token).toBe(`token-${index + 1}`);
+      expect(result.stderr).toBe('');
+    }
+
+    const sidecars = (await readdir(cacheDir)).filter((entry) =>
+      entry.startsWith('.add-eks-stats.json.malformed'),
+    );
+    expect(sidecars).toHaveLength(1);
   });
 
   it('caps recent stats at 50 entries', async () => {
@@ -298,11 +350,9 @@ not-json
       expect(result.stderr).toBe('');
     }
 
-    const stats = JSON.parse(
-      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
-    );
-    expect(stats.misses).toBe(55);
-    expect(stats.awsCalls).toBe(55);
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(55);
+    expect(stats.totals.awsCalls).toBe(55);
     expect(stats.recent).toHaveLength(50);
     expect(stats.recent[0]).toMatchObject({ type: 'miss' });
     expect(Object.keys(stats.byCluster)).toHaveLength(50);
