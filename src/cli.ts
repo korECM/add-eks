@@ -209,10 +209,11 @@ statsCommand
   .option('--cache-dir <path>', 'token cache directory to clear stats from')
   .option('--yes', 'confirm stats deletion')
   .option('--json', 'print machine-readable JSON output')
-  .action(async (options: StatsOptions) => {
+  .action(async (options: StatsOptions, command: Command) => {
     try {
-      const result = await runStatsClear(options);
-      if (options.json === true) {
+      const mergedOptions = mergeParentStatsOptions(options, command);
+      const result = await runStatsClear(mergedOptions);
+      if (mergedOptions.json === true) {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         return;
       }
@@ -342,6 +343,15 @@ function formatCacheEntry(entry: CacheEntry): string {
 
   const suffix = details.length === 0 ? '' : ` ${details.join(' ')}`;
   return `${entry.name} ${entry.status} ${entry.size}B${suffix}`;
+}
+
+function mergeParentStatsOptions(options: StatsOptions, command: Command): StatsOptions {
+  const parentOptions = command.parent?.opts<StatsOptions>() ?? {};
+
+  return {
+    ...parentOptions,
+    ...options,
+  };
 }
 
 function writeUpdateResult(result: Awaited<ReturnType<typeof runUpdate>>): void {

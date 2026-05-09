@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
@@ -11,6 +13,8 @@ import {
 } from '../../src/commands/stats.js';
 import { defaultPaths } from '../../src/core/paths.js';
 import { statsPathForCacheDir } from '../../src/core/stats.js';
+
+const execFileAsync = promisify(execFile);
 
 async function tempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'add-eks-stats-command-'));
@@ -134,6 +138,41 @@ describe('stats command handlers', () => {
     await writeStats(cacheDir);
 
     await expect(runStatsClear({ cacheDir, yes: true }, { home: root })).resolves.toEqual({
+      cacheDir,
+      deleted: true,
+    });
+    await expect(readFile(statsPathForCacheDir(cacheDir), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('respects parent --cache-dir when clearing stats through the CLI', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'explicit-cache');
+    await writeStats(cacheDir);
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        'src/cli.ts',
+        'stats',
+        '--cache-dir',
+        cacheDir,
+        'clear',
+        '--yes',
+        '--json',
+      ],
+      {
+        env: {
+          ...process.env,
+          HOME: root,
+        },
+      },
+    );
+
+    expect(JSON.parse(stdout)).toEqual({
       cacheDir,
       deleted: true,
     });
