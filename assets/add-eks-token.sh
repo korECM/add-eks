@@ -79,6 +79,34 @@ timestamp_epoch() {
   printf '%s\n' "$epoch"
 }
 
+current_millis() {
+  millis=$(date -u +%s%3N 2>/dev/null)
+  case "$millis" in
+    ''|*[!0-9]*) ;;
+    *) printf '%s\n' "$millis"; return 0 ;;
+  esac
+
+  epoch=$(date -u +%s 2>/dev/null)
+  case "$epoch" in
+    ''|*[!0-9]*) printf '0\n' ;;
+    *) printf '%s\n' $((epoch * 1000)) ;;
+  esac
+}
+
+elapsed_millis() {
+  start_ms=$1
+  end_ms=$2
+
+  case "$start_ms:$end_ms" in
+    *[!0-9:]*|:*) printf '0\n'; return 0 ;;
+  esac
+  if [ "$end_ms" -ge "$start_ms" ]; then
+    printf '%s\n' $((end_ms - start_ms))
+  else
+    printf '0\n'
+  fi
+}
+
 profile_cache_label() {
   if [ "${profile:-}" != "" ]; then
     printf '%s' "$profile"
@@ -193,6 +221,189 @@ cache_file_name() {
   prefix=$(safe_prefix "$cache_key-$(safe_name "$key_value")")
 
   printf '%s-%s.json\n' "$prefix" "$cache_hash"
+}
+
+stats_bucket_key() {
+  profile_label=$(profile_cache_label)
+  safe_prefix "$(safe_name "$cluster")__$(safe_name "$region")__$(safe_name "$profile_label")"
+}
+
+stats_file_is_valid() {
+  file=$1
+
+  [ -f "$file" ] || return 0
+  version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*1.*/1/p' "$file" 2>/dev/null | sed -n '1p')
+  recent=$(sed -n 's/.*"recent"[[:space:]]*:[[:space:]]*\[.*/1/p' "$file" 2>/dev/null | sed -n '1p')
+  by_cluster=$(sed -n 's/.*"byCluster"[[:space:]]*:[[:space:]]*{.*/1/p' "$file" 2>/dev/null | sed -n '1p')
+
+  [ "$version" = "1" ] && [ "$recent" = "1" ] && [ "$by_cluster" = "1" ]
+}
+
+record_stats() {
+  stats_type=$1
+  stats_actual_ms=${2:-0}
+  stats_file=$cache_dir/.add-eks-stats.json
+  stats_input=/dev/null
+  stats_bucket=$(stats_bucket_key)
+
+  case "$stats_actual_ms" in
+    ''|*[!0-9]*) stats_actual_ms=0 ;;
+  esac
+
+  if [ -f "$stats_file" ]; then
+    if stats_file_is_valid "$stats_file"; then
+      stats_input=$stats_file
+    else
+      if ! mv "$stats_file" "$stats_file.malformed.$$" 2>/dev/null; then
+        debug 'stats update skipped: failed to move malformed stats file aside'
+        return 0
+      fi
+    fi
+  fi
+
+  stats_tmp=$stats_file.$$.tmp
+  if ! awk -v event="$stats_type" -v actual_ms="$stats_actual_ms" -v bucket="$stats_bucket" '
+    BEGIN {
+      hits = 0
+      misses = 0
+      aws_calls = 0
+      actual_total = 0
+      estimated_total = 0
+      recent_count = 0
+      bucket_count = 0
+    }
+    function number_field(line, name, marker, value) {
+      marker = "\"" name "\":"
+      value = line
+      sub("^.*" marker, "", value)
+      sub("[^0-9].*$", "", value)
+      if (value == "") {
+        return 0
+      }
+      return value + 0
+    }
+    function clean_recent(line) {
+      sub("^[[:space:]]*", "", line)
+      sub(",$", "", line)
+      return line
+    }
+    /^"hits":/ { hits = number_field($0, "hits") }
+    /^"misses":/ { misses = number_field($0, "misses") }
+    /^"awsCalls":/ { aws_calls = number_field($0, "awsCalls") }
+    /^"actualAwsMsTotal":/ { actual_total = number_field($0, "actualAwsMsTotal") }
+    /^"estimatedSavedMs":/ { estimated_total = number_field($0, "estimatedSavedMs") }
+    /^"recent":\[/ { in_recent = 1; next }
+    in_recent && /^\],/ { in_recent = 0; next }
+    in_recent {
+      recent[++recent_count] = clean_recent($0)
+      next
+    }
+    /^"byCluster":\{/ { in_cluster = 1; next }
+    in_cluster && /^\}/ { in_cluster = 0; next }
+    in_cluster && /^"/ {
+      line = $0
+      key = line
+      sub("^\"", "", key)
+      sub("\":.*$", "", key)
+      if (!(key in bucket_seen)) {
+        bucket_order[++bucket_count] = key
+        bucket_seen[key] = 1
+      }
+      bucket_hits[key] = number_field(line, "hits")
+      bucket_misses[key] = number_field(line, "misses")
+      bucket_aws_calls[key] = number_field(line, "awsCalls")
+      bucket_actual_total[key] = number_field(line, "actualAwsMsTotal")
+      bucket_estimated_total[key] = number_field(line, "estimatedSavedMs")
+    }
+    END {
+      if (event == "hit") {
+        saved_ms = aws_calls > 0 ? int(actual_total / aws_calls) : 2000
+        hits++
+        estimated_total += saved_ms
+        new_recent = "{\"type\":\"hit\",\"cluster\":\"" bucket "\",\"estimatedSavedMs\":" saved_ms "}"
+        bucket_hits[bucket]++
+        bucket_estimated_total[bucket] += saved_ms
+      } else {
+        misses++
+        aws_calls++
+        actual_total += actual_ms
+        new_recent = "{\"type\":\"miss\",\"cluster\":\"" bucket "\",\"actualAwsMs\":" actual_ms "}"
+        bucket_misses[bucket]++
+        bucket_aws_calls[bucket]++
+        bucket_actual_total[bucket] += actual_ms
+      }
+
+      recent[++recent_count] = new_recent
+      if (!(bucket in bucket_seen)) {
+        bucket_order[++bucket_count] = bucket
+        bucket_seen[bucket] = 1
+      }
+
+      while (recent_count > 50) {
+        for (i = 1; i < recent_count; i++) {
+          recent[i] = recent[i + 1]
+        }
+        delete recent[recent_count]
+        recent_count--
+      }
+      while (bucket_count > 50) {
+        delete_key = bucket_order[1]
+        delete bucket_seen[delete_key]
+        delete bucket_hits[delete_key]
+        delete bucket_misses[delete_key]
+        delete bucket_aws_calls[delete_key]
+        delete bucket_actual_total[delete_key]
+        delete bucket_estimated_total[delete_key]
+        for (i = 1; i < bucket_count; i++) {
+          bucket_order[i] = bucket_order[i + 1]
+        }
+        delete bucket_order[bucket_count]
+        bucket_count--
+      }
+
+      print "{"
+      print "\"version\":1,"
+      print "\"hits\":" hits ","
+      print "\"misses\":" misses ","
+      print "\"awsCalls\":" aws_calls ","
+      print "\"actualAwsMsTotal\":" actual_total ","
+      print "\"estimatedSavedMs\":" estimated_total ","
+      print "\"recent\":["
+      for (i = 1; i <= recent_count; i++) {
+        suffix = i < recent_count ? "," : ""
+        print recent[i] suffix
+      }
+      print "],"
+      print "\"byCluster\":{"
+      written = 0
+      for (i = 1; i <= bucket_count; i++) {
+        key = bucket_order[i]
+        if (!(key in bucket_seen)) {
+          continue
+        }
+        written++
+        suffix = written < bucket_count ? "," : ""
+        print "\"" key "\":{\"hits\":" bucket_hits[key] + 0 ",\"misses\":" bucket_misses[key] + 0 ",\"awsCalls\":" bucket_aws_calls[key] + 0 ",\"actualAwsMsTotal\":" bucket_actual_total[key] + 0 ",\"estimatedSavedMs\":" bucket_estimated_total[key] + 0 "}" suffix
+      }
+      print "}"
+      print "}"
+    }
+  ' "$stats_input" 2>/dev/null > "$stats_tmp"; then
+    debug 'stats update skipped: failed to write temporary stats file'
+    rm -f "$stats_tmp" 2>/dev/null
+    return 0
+  fi
+
+  if ! chmod 600 "$stats_tmp" 2>/dev/null; then
+    debug 'stats update skipped: failed to set stats file mode'
+    rm -f "$stats_tmp" 2>/dev/null
+    return 0
+  fi
+  if ! mv "$stats_tmp" "$stats_file" 2>/dev/null; then
+    debug 'stats update skipped: failed to replace stats file'
+    rm -f "$stats_tmp" 2>/dev/null
+    return 0
+  fi
 }
 
 read_cache_if_fresh() {
@@ -368,14 +579,19 @@ key_value=$(cache_key_value)
 cache_name=$(cache_file_name "$key_value")
 cache_file=$cache_dir/$cache_name
 
-if read_cache_if_fresh "$cache_file"; then
+if cached_json=$(read_cache_if_fresh "$cache_file"); then
+  record_stats hit 0
+  printf '%s\n' "$cached_json"
   exit 0
 fi
 
 debug 'cache miss: invoking aws'
 aws_err=$cache_file.$$.aws.err
+aws_start_ms=$(current_millis)
 json=$(call_aws 2>"$aws_err")
 aws_status=$?
+aws_end_ms=$(current_millis)
+actual_aws_ms=$(elapsed_millis "$aws_start_ms" "$aws_end_ms")
 if [ "$aws_status" -ne 0 ]; then
   if [ -s "$aws_err" ]; then
     cat "$aws_err" >&2
@@ -404,4 +620,5 @@ chmod 600 "$tmp_file" || fatal 'failed to set temporary cache file mode'
 mv "$tmp_file" "$cache_file" || fatal 'failed to replace cache file'
 trap - HUP INT TERM EXIT
 
+record_stats miss "$actual_aws_ms"
 printf '%s\n' "$json"

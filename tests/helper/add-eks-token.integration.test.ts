@@ -93,6 +93,10 @@ function baseArgs(cacheDir: string, extra: string[] = []): string[] {
   ];
 }
 
+async function cacheEntryFiles(cacheDir: string): Promise<string[]> {
+  return (await readdir(cacheDir)).filter((entry) => !entry.startsWith('.add-eks-stats'));
+}
+
 describe('add-eks-token POSIX helper', () => {
   it('caches aws ExecCredential JSON and reuses it on the second run', async () => {
     const root = await tempDir();
@@ -115,7 +119,7 @@ describe('add-eks-token POSIX helper', () => {
     expect(first.stderr).toContain('cache miss');
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
 
-    const cacheFiles = await readdir(cacheDir);
+    const cacheFiles = await cacheEntryFiles(cacheDir);
     expect(cacheFiles).toHaveLength(1);
     expect((await stat(cacheDir)).mode & 0o777).toBe(0o700);
     expect((await stat(path.join(cacheDir, cacheFiles[0]))).mode & 0o777).toBe(0o600);
@@ -134,6 +138,127 @@ describe('add-eks-token POSIX helper', () => {
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
   });
 
+  it('records miss then hit totals and keeps stdout JSON parseable', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({
+      binDir,
+      callsPath,
+      expectedArgs: 'eks get-token --cluster-name dev --region us-west-2 --profile team',
+    });
+
+    const env = testEnv({ binDir, callsPath, debug: false });
+    const args = baseArgs(cacheDir);
+
+    const first = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+    const firstJson = JSON.parse(first.stdout);
+    expect(firstJson.status.token).toBe('token-1');
+    expect(first.stderr).toBe('');
+
+    const second = await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
+    const secondJson = JSON.parse(second.stdout);
+    expect(secondJson).toEqual(firstJson);
+    expect(second.stderr).toBe('');
+
+    const stats = JSON.parse(
+      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
+    );
+    expect(stats.hits).toBe(1);
+    expect(stats.misses).toBe(1);
+    expect(stats.awsCalls).toBe(1);
+    expect(stats.actualAwsMsTotal).toBeGreaterThanOrEqual(0);
+    expect(stats.estimatedSavedMs).toBeGreaterThanOrEqual(0);
+    expect(stats.recent).toHaveLength(2);
+    expect(stats.recent[0]).toMatchObject({ type: 'miss' });
+    expect(stats.recent[0].actualAwsMs).toBeGreaterThanOrEqual(0);
+    expect(stats.recent[1]).toMatchObject({ type: 'hit' });
+    expect(stats.recent[1].estimatedSavedMs).toBeGreaterThanOrEqual(0);
+
+    const buckets = Object.values(stats.byCluster) as Array<{
+      hits: number;
+      misses: number;
+      awsCalls: number;
+      actualAwsMsTotal: number;
+      estimatedSavedMs: number;
+    }>;
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]).toMatchObject({
+      hits: 1,
+      misses: 1,
+      awsCalls: 1,
+    });
+    expect(buckets[0].actualAwsMsTotal).toBeGreaterThanOrEqual(0);
+    expect(buckets[0].estimatedSavedMs).toBeGreaterThanOrEqual(0);
+    await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
+  });
+
+  it('moves malformed stats file aside and recreates it', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(cacheDir);
+    await writeFile(path.join(cacheDir, '.add-eks-stats.json'), 'not-json\n', 'utf8');
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+
+    const entries = await readdir(cacheDir);
+    expect(entries).toContain('.add-eks-stats.json');
+    expect(entries.some((entry) => entry.startsWith('.add-eks-stats.json.malformed.'))).toBe(
+      true,
+    );
+
+    const stats = JSON.parse(
+      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
+    );
+    expect(stats.misses).toBe(1);
+    expect(stats.awsCalls).toBe(1);
+    expect(stats.recent).toHaveLength(1);
+    expect(stats.recent[0]).toMatchObject({ type: 'miss' });
+  });
+
+  it('caps recent stats at 50 entries', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+
+    const env = testEnv({ binDir, callsPath, debug: false });
+    for (let index = 0; index < 55; index += 1) {
+      const result = await execFileAsync(
+        '/bin/sh',
+        [
+          helperPath.pathname,
+          ...baseArgs(cacheDir, ['--cluster', `dev-${index}`, '--cache-key', 'cluster']),
+        ],
+        { env },
+      );
+      expect(JSON.parse(result.stdout).status.token).toBe(`token-${index + 1}`);
+      expect(result.stderr).toBe('');
+    }
+
+    const stats = JSON.parse(
+      await readFile(path.join(cacheDir, '.add-eks-stats.json'), 'utf8'),
+    );
+    expect(stats.misses).toBe(55);
+    expect(stats.awsCalls).toBe(55);
+    expect(stats.recent).toHaveLength(50);
+    expect(stats.recent[0]).toMatchObject({ type: 'miss' });
+    expect(Object.keys(stats.byCluster)).toHaveLength(50);
+  });
+
   it('treats an invalid future expiration timestamp in cache as a miss', async () => {
     const root = await tempDir();
     const binDir = path.join(root, 'bin');
@@ -146,7 +271,7 @@ describe('add-eks-token POSIX helper', () => {
     const args = baseArgs(cacheDir);
 
     await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
-    const [cacheFile] = await readdir(cacheDir);
+    const [cacheFile] = await cacheEntryFiles(cacheDir);
     await writeFile(
       path.join(cacheDir, cacheFile),
       '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"expirationTimestamp":"2999-02-31T00:00:00Z","token":"invalid-cache"}}\n',
@@ -172,7 +297,7 @@ describe('add-eks-token POSIX helper', () => {
     const args = baseArgs(cacheDir);
 
     await execFileAsync('/bin/sh', [helperPath.pathname, ...args], { env });
-    const [cacheFile] = await readdir(cacheDir);
+    const [cacheFile] = await cacheEntryFiles(cacheDir);
     await writeFile(
       path.join(cacheDir, cacheFile),
       '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"expirationTimestamp":"2000-01-01T00:00:00Z","token":"expired-cache"}}\n',
@@ -217,7 +342,7 @@ describe('add-eks-token POSIX helper', () => {
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');
     expect(JSON.parse(second.stdout).status.token).toBe('token-2');
     expect(JSON.parse(third.stdout).status.token).toBe('token-1');
-    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(cacheEntryFiles(cacheDir)).resolves.toHaveLength(2);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
   });
 
@@ -252,7 +377,7 @@ describe('add-eks-token POSIX helper', () => {
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');
     expect(JSON.parse(second.stdout).status.token).toBe('token-2');
     expect(JSON.parse(third.stdout).status.token).toBe('token-1');
-    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(cacheEntryFiles(cacheDir)).resolves.toHaveLength(2);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
   });
 
@@ -277,7 +402,7 @@ describe('add-eks-token POSIX helper', () => {
 
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');
     expect(JSON.parse(second.stdout).status.token).toBe('token-1');
-    expect(await readdir(cacheDir)).toHaveLength(1);
+    await expect(cacheEntryFiles(cacheDir)).resolves.toHaveLength(1);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('1\n');
   });
 
@@ -318,7 +443,7 @@ describe('add-eks-token POSIX helper', () => {
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');
     expect(JSON.parse(second.stdout).status.token).toBe('token-2');
     expect(JSON.parse(third.stdout).status.token).toBe('token-1');
-    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(cacheEntryFiles(cacheDir)).resolves.toHaveLength(2);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
   });
 
@@ -357,7 +482,7 @@ describe('add-eks-token POSIX helper', () => {
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');
     expect(JSON.parse(second.stdout).status.token).toBe('token-2');
     expect(JSON.parse(third.stdout).status.token).toBe('token-1');
-    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(cacheEntryFiles(cacheDir)).resolves.toHaveLength(2);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
   });
 
@@ -408,7 +533,7 @@ describe('add-eks-token POSIX helper', () => {
     expect(JSON.parse(first.stdout).status.token).toBe('token-1');
     expect(JSON.parse(second.stdout).status.token).toBe('token-2');
     expect(JSON.parse(third.stdout).status.token).toBe('token-1');
-    expect(await readdir(cacheDir)).toHaveLength(2);
+    await expect(cacheEntryFiles(cacheDir)).resolves.toHaveLength(2);
     await expect(readFile(callsPath, 'utf8')).resolves.toBe('2\n');
   });
 
