@@ -232,11 +232,101 @@ stats_file_is_valid() {
   file=$1
 
   [ -f "$file" ] || return 0
-  version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*1.*/1/p' "$file" 2>/dev/null | sed -n '1p')
-  recent=$(sed -n 's/.*"recent"[[:space:]]*:[[:space:]]*\[.*/1/p' "$file" 2>/dev/null | sed -n '1p')
-  by_cluster=$(sed -n 's/.*"byCluster"[[:space:]]*:[[:space:]]*{.*/1/p' "$file" 2>/dev/null | sed -n '1p')
-
-  [ "$version" = "1" ] && [ "$recent" = "1" ] && [ "$by_cluster" = "1" ]
+  awk '
+    BEGIN {
+      state = 1
+      recent_count = 0
+      recent_comma = 0
+      bucket_count = 0
+      bucket_comma = 0
+    }
+    function fail() {
+      ok = 0
+      exit 1
+    }
+    state == 1 {
+      if ($0 != "{") fail()
+      state = 2
+      next
+    }
+    state == 2 {
+      if ($0 != "\"version\":1,") fail()
+      state = 3
+      next
+    }
+    state == 3 {
+      if ($0 !~ /^"hits":[0-9]+,$/) fail()
+      state = 4
+      next
+    }
+    state == 4 {
+      if ($0 !~ /^"misses":[0-9]+,$/) fail()
+      state = 5
+      next
+    }
+    state == 5 {
+      if ($0 !~ /^"awsCalls":[0-9]+,$/) fail()
+      state = 6
+      next
+    }
+    state == 6 {
+      if ($0 !~ /^"actualAwsMsTotal":[0-9]+,$/) fail()
+      state = 7
+      next
+    }
+    state == 7 {
+      if ($0 !~ /^"estimatedSavedMs":[0-9]+,$/) fail()
+      state = 8
+      next
+    }
+    state == 8 {
+      if ($0 != "\"recent\":[") fail()
+      state = 9
+      next
+    }
+    state == 9 && $0 == "]," {
+      if (recent_count > 0 && recent_comma == 1) fail()
+      state = 10
+      next
+    }
+    state == 9 {
+      if (recent_count > 0 && recent_comma == 0) fail()
+      if ($0 !~ /^[{]"type":"(hit|miss)","cluster":"[A-Za-z0-9._-]+","(actualAwsMs|estimatedSavedMs)":[0-9]+[}],?$/) fail()
+      recent_count++
+      recent_comma = ($0 ~ /,$/) ? 1 : 0
+      next
+    }
+    state == 10 {
+      if ($0 != "\"byCluster\":{") fail()
+      state = 11
+      next
+    }
+    state == 11 && $0 == "}" {
+      if (bucket_count > 0 && bucket_comma == 1) fail()
+      state = 12
+      next
+    }
+    state == 11 {
+      if (bucket_count > 0 && bucket_comma == 0) fail()
+      if ($0 !~ /^"[A-Za-z0-9._-]+":[{]"hits":[0-9]+,"misses":[0-9]+,"awsCalls":[0-9]+,"actualAwsMsTotal":[0-9]+,"estimatedSavedMs":[0-9]+[}],?$/) fail()
+      bucket_count++
+      bucket_comma = ($0 ~ /,$/) ? 1 : 0
+      next
+    }
+    state == 12 {
+      if ($0 != "}") fail()
+      state = 13
+      next
+    }
+    {
+      fail()
+    }
+    END {
+      if (state != 13) {
+        exit 1
+      }
+    }
+  ' "$file" >/dev/null 2>&1
 }
 
 record_stats() {
