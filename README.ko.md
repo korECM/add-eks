@@ -7,6 +7,7 @@ EKS kubeconfig 등록과 업데이트를 편하게 하고, 빠른 토큰 캐시�
 ## 매력 포인트
 
 - **kubectl 지연 감소**: EKS `ExecCredential` JSON을 `expirationTimestamp` 직전까지 캐시합니다.
+- **아낀 시간 통계**: cache hit, 피한 AWS token 호출 수, 되찾은 시간을 다른 단위로 바꾼 재치 있는 통계를 보여줍니다.
 - **Node 없는 kubectl 런타임**: helper는 POSIX `sh`와 AWS CLI만 사용합니다. Node.js, npx, bun, jq, Python이 필요 없습니다.
 - **대화식/비대화식 모두 지원**: 로컬에서는 친절한 프롬프트로, CI나 스크립트에서는 flag만으로 실행할 수 있습니다.
 - **기존 kubeconfig 패치**: kubeconfig를 다시 만들지 않고 현재 EKS context를 업데이트합니다.
@@ -80,6 +81,10 @@ add-eks cache list
 add-eks cache status
 add-eks cache clear --yes
 
+add-eks stats
+add-eks stats --json
+add-eks stats clear --yes
+
 add-eks doctor
 add-eks completion zsh
 ```
@@ -136,6 +141,35 @@ add-eks cache clear --yes
 
 cache clear는 보수적으로 동작합니다. add-eks helper cache entry라고 확실히 판단되는 파일만 삭제하고, 관련 없는 파일은 건너뜁니다.
 
+## 아낀 시간 통계
+
+```sh
+add-eks stats
+add-eks stats --json
+add-eks stats clear --yes
+```
+
+`add-eks`는 token cache 옆에 bounded stats file을 두고 cache hit/miss를 기록합니다. miss 때는 실제 `aws eks get-token` 소요 시간을 측정하고, hit 때는 측정된 평균 시간을 기준으로 아낀 시간을 계산합니다. 데이터가 아직 부족하면 보수적인 fallback 값을 사용합니다.
+
+사람용 출력은 실제 숫자를 먼저 보여준 뒤, 되찾은 시간을 작은 현실 단위로 바꿔 보여줍니다.
+
+```text
+Time saved: 4m 12s
+Cache hits: 38
+AWS token calls avoided: 38
+AWS token calls made: 5
+Average token call: 6.6s
+
+In other units:
+- 1.4 Instant ramen timers
+- 1.2 Songs
+- 5.6 Loading spinners
+
+kubectl quietly handed you 4m 12s back.
+```
+
+stats 저장소는 무한히 커지지 않습니다. helper는 compact totals를 유지하고 recent event와 cluster bucket 수를 제한합니다. stats 기록 실패는 무시되므로 kubectl 동작을 깨지 않습니다. `add-eks cache status`도 saved-time 데이터가 있으면 짧은 stats pointer를 보여줍니다.
+
 ## Shell Completion
 
 ```sh
@@ -167,11 +201,13 @@ Doctor는 다음을 확인합니다.
 - kubectl 사용 가능 여부,
 - helper 설치 상태,
 - cache directory 상태,
+- saved-time stats file 상태,
 - kubeconfig 읽기 가능 여부.
 
 ## 보안 메모
 
 - cache file은 제한적인 권한으로 작성합니다.
+- stats file은 bounded 방식으로 best-effort 작성됩니다. stats 실패가 kubectl 실패로 이어지지 않습니다.
 - cache identity에는 cluster, region, profile 또는 ambient AWS identity 정보, role ARN, 가능한 경우 cluster ARN을 포함합니다.
 - helper stdout은 Kubernetes `ExecCredential` JSON 전용입니다. 로그는 stderr로 출력합니다.
 - 만료 시간이 애매하거나 잘못된 경우 cache hit로 처리하지 않습니다.

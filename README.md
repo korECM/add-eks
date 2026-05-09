@@ -7,6 +7,7 @@ Friendly EKS kubeconfig setup with fast cached token support.
 ## Highlights
 
 - **Faster kubectl startup**: cache EKS `ExecCredential` JSON until shortly before `expirationTimestamp`.
+- **Time-saved stats**: track cache hits, avoided AWS token calls, and playful "other units" for the time you got back.
 - **Node-free kubectl runtime**: the installed helper uses POSIX `sh` and AWS CLI, not Node.js, npx, bun, jq, or Python.
 - **Interactive and scriptable**: run a guided flow or fully non-interactive commands with flags.
 - **Patch existing kubeconfigs**: update current EKS contexts without recreating your whole kubeconfig.
@@ -80,6 +81,10 @@ add-eks cache list
 add-eks cache status
 add-eks cache clear --yes
 
+add-eks stats
+add-eks stats --json
+add-eks stats clear --yes
+
 add-eks doctor
 add-eks completion zsh
 ```
@@ -136,6 +141,35 @@ add-eks cache clear --yes
 
 Cache clearing is conservative. It skips files that are not confidently identified as add-eks helper cache entries.
 
+## Saved-Time Stats
+
+```sh
+add-eks stats
+add-eks stats --json
+add-eks stats clear --yes
+```
+
+`add-eks` records cache hit/miss totals in a bounded stats file next to the token cache. Misses measure real `aws eks get-token` time. Hits estimate saved time from the measured average, with a conservative fallback until enough data exists.
+
+Human output keeps the numbers clear, then translates the saved time into small real-world units:
+
+```text
+Time saved: 4m 12s
+Cache hits: 38
+AWS token calls avoided: 38
+AWS token calls made: 5
+Average token call: 6.6s
+
+In other units:
+- 1.4 Instant ramen timers
+- 1.2 Songs
+- 5.6 Loading spinners
+
+kubectl quietly handed you 4m 12s back.
+```
+
+Stats storage is bounded. The helper keeps compact totals, caps recent events and cluster buckets, and ignores stats write failures so kubectl keeps working. `add-eks cache status` also shows a short stats pointer when saved-time data exists.
+
 ## Shell Completion
 
 ```sh
@@ -167,11 +201,13 @@ Doctor checks:
 - kubectl availability,
 - helper installation,
 - cache directory,
+- saved-time stats file,
 - kubeconfig readability.
 
 ## Security Notes
 
 - Cache files are written with restrictive permissions.
+- Stats files are bounded and written best-effort; stats failures do not fail kubectl.
 - Cache identity includes cluster, region, profile or ambient AWS identity material, role ARN, and cluster ARN when available.
 - stdout from the helper is reserved for Kubernetes `ExecCredential` JSON; logs go to stderr.
 - The helper fails closed on malformed or ambiguous expiration timestamps.
