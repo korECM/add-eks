@@ -344,12 +344,16 @@ stats_lock_is_stale() {
   lock_meta=$lock_dir/created-at-ms
 
   if [ ! -f "$lock_meta" ]; then
-    return 0
+    stats_lock_dir_is_stale "$lock_dir"
+    return $?
   fi
 
   lock_created=$(sed -n '1p' "$lock_meta" 2>/dev/null)
   case "$lock_created" in
-    ''|*[!0-9]*) return 0 ;;
+    ''|*[!0-9]*|0[0-9]*)
+      stats_lock_dir_is_stale "$lock_dir"
+      return $?
+      ;;
   esac
 
   now_ms=$(current_millis)
@@ -358,6 +362,12 @@ stats_lock_is_stale() {
   esac
 
   [ $((now_ms - lock_created)) -ge 60000 ]
+}
+
+stats_lock_dir_is_stale() {
+  lock_dir=$1
+  stale_lock=$(find "$lock_dir" -prune -mmin +1 -print 2>/dev/null | sed -n '1p')
+  [ "$stale_lock" != "" ]
 }
 
 write_stats_lock_metadata() {

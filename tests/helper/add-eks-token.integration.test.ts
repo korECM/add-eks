@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   stat,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -356,7 +357,7 @@ not-json
     expect(stats.recent).toHaveLength(1);
   });
 
-  it('recovers stats lock without metadata and records stats', async () => {
+  it('skips stats quickly when lock is missing metadata but fresh', async () => {
     const root = await tempDir();
     const binDir = path.join(root, 'bin');
     const cacheDir = path.join(root, 'cache');
@@ -371,12 +372,11 @@ not-json
 
     expect(JSON.parse(result.stdout).status.token).toBe('token-1');
     expect(result.stderr).toBe('');
-    expect((await readdir(cacheDir)).includes('.add-eks-stats.json.lock')).toBe(false);
 
     const stats = await readStats(cacheDir);
-    expect(stats.totals.misses).toBe(1);
-    expect(stats.totals.awsCalls).toBe(1);
-    expect(stats.recent).toHaveLength(1);
+    expect(stats.totals.misses).toBe(0);
+    expect(stats.recent).toHaveLength(0);
+    expect((await readdir(cacheDir)).includes('.add-eks-stats.json.lock')).toBe(true);
   });
 
   it('skips stats quickly when lock is fresh', async () => {
@@ -392,6 +392,55 @@ not-json
       `${Date.now()}\n`,
       'utf8',
     );
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(0);
+    expect(stats.recent).toHaveLength(0);
+  });
+
+  it('recovers old stats lock without metadata and records stats', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+    const lockDir = path.join(cacheDir, '.add-eks-stats.json.lock');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(lockDir, { recursive: true });
+    const old = new Date(Date.now() - 120_000);
+    await utimes(lockDir, old, old);
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+    expect((await readdir(cacheDir)).includes('.add-eks-stats.json.lock')).toBe(false);
+
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(1);
+    expect(stats.totals.awsCalls).toBe(1);
+    expect(stats.recent).toHaveLength(1);
+  });
+
+  it('does not fail when stats lock metadata has invalid octal digits', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+    const lockDir = path.join(cacheDir, '.add-eks-stats.json.lock');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, 'created-at-ms'), '08\n', 'utf8');
 
     const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
       env: testEnv({ binDir, callsPath, debug: false }),
