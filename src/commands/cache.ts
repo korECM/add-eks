@@ -13,6 +13,7 @@ import type {
   ClearCacheResult,
 } from '../core/cache.js';
 import { defaultPaths, resolveHomePath } from '../core/paths.js';
+import { readStats, summarizeStats } from '../core/stats.js';
 
 export interface CacheCommandOptions {
   cacheDir?: string;
@@ -33,6 +34,15 @@ export interface CacheListResult {
   entries: CacheEntry[];
 }
 
+export interface CacheStatsPointer {
+  hits: number;
+  estimatedSavedMs: number;
+}
+
+export interface CacheStatusResult extends CacheStatus {
+  stats?: CacheStatsPointer;
+}
+
 export async function runCacheList(
   options: CacheCommandOptions,
   deps: CacheCommandDeps = {},
@@ -49,11 +59,12 @@ export async function runCacheList(
 export async function runCacheStatus(
   options: CacheCommandOptions,
   deps: CacheCommandDeps = {},
-): Promise<CacheStatus> {
+): Promise<CacheStatusResult> {
   const cacheDir = resolveCacheDir(options, deps);
+  const stats = await readCacheStatsPointer(cacheDir);
 
   if (!hasFilters(options)) {
-    return readCacheStatus(cacheDir);
+    return addStatsPointer(await readCacheStatus(cacheDir), stats);
   }
 
   const entries = filterEntries(await listCacheEntries(cacheDir), options);
@@ -63,13 +74,13 @@ export async function runCacheStatus(
     counts[entry.status] = (counts[entry.status] ?? 0) + 1;
   }
 
-  return {
+  return addStatsPointer({
     cacheDir,
     totalEntries: entries.length,
     totalSize: entries.reduce((sum, entry) => sum + entry.size, 0),
     counts,
     entries,
-  };
+  }, stats);
 }
 
 export async function runCacheClear(
@@ -123,6 +134,31 @@ function hasFilters(options: CacheCommandOptions): boolean {
     options.region !== undefined ||
     options.profile !== undefined
   );
+}
+
+async function readCacheStatsPointer(cacheDir: string): Promise<CacheStatsPointer | undefined> {
+  const summary = summarizeStats(await readStats(cacheDir));
+
+  if (summary.hits === 0 && summary.estimatedSavedMs === 0) {
+    return undefined;
+  }
+
+  return {
+    hits: summary.hits,
+    estimatedSavedMs: summary.estimatedSavedMs,
+  };
+}
+
+function addStatsPointer(
+  status: CacheStatus,
+  stats: CacheStatsPointer | undefined,
+): CacheStatusResult {
+  return stats === undefined
+    ? status
+    : {
+        ...status,
+        stats,
+      };
 }
 
 function safeName(value: string): string {

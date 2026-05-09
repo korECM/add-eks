@@ -13,6 +13,7 @@ import { runInteractive, runInteractiveEntrypoint } from './commands/interactive
 import { runRestore } from './commands/restore.js';
 import { runRevert } from './commands/revert.js';
 import { formatStatsHuman, runStatsClear, runStatsShow } from './commands/stats.js';
+import { formatDuration } from './core/stats.js';
 import { runUpdate } from './commands/update.js';
 import { name, version } from './index.js';
 
@@ -282,6 +283,11 @@ cacheCommand
       process.stdout.write(`Entries: ${result.totalEntries}\n`);
       process.stdout.write(`Size: ${result.totalSize} bytes\n`);
       process.stdout.write(`Status: ${statuses === '' ? 'none' : statuses}\n`);
+      if (result.stats !== undefined) {
+        process.stdout.write(
+          `Stats: ${result.stats.hits} ${pluralize('hit', result.stats.hits)}, about ${formatDuration(result.stats.estimatedSavedMs)} saved. Run \`add-eks stats\` for details.\n`,
+        );
+      }
     } catch (error) {
       writeCommandError(error);
     }
@@ -343,6 +349,10 @@ function formatCacheEntry(entry: CacheEntry): string {
 
   const suffix = details.length === 0 ? '' : ` ${details.join(' ')}`;
   return `${entry.name} ${entry.status} ${entry.size}B${suffix}`;
+}
+
+function pluralize(word: string, count: number): string {
+  return count === 1 ? word : `${word}s`;
 }
 
 function mergeParentStatsOptions(options: StatsOptions, command: Command): StatsOptions {

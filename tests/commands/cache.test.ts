@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
@@ -14,6 +16,9 @@ import {
   listCacheEntries,
   readCacheStatus,
 } from '../../src/core/cache.js';
+import { statsPathForCacheDir } from '../../src/core/stats.js';
+
+const execFileAsync = promisify(execFile);
 
 async function tempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'add-eks-cache-'));
@@ -39,6 +44,36 @@ async function writeCacheFile(
   const filePath = path.join(cacheDir, name);
   await writeFile(filePath, contents, 'utf8');
   return filePath;
+}
+
+async function writeStats(
+  cacheDir: string,
+  totals: Partial<{
+    hits: number;
+    misses: number;
+    awsCalls: number;
+    estimatedSavedMs: number;
+    actualAwsMsTotal: number;
+  }> = {},
+): Promise<void> {
+  await mkdir(cacheDir, { recursive: true });
+  await writeFile(
+    statsPathForCacheDir(cacheDir),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      totals: {
+        hits: 38,
+        misses: 5,
+        awsCalls: 5,
+        estimatedSavedMs: 252000,
+        actualAwsMsTotal: 33000,
+        ...totals,
+      },
+      byCluster: {},
+      recent: [],
+    })}\n`,
+    'utf8',
+  );
 }
 
 describe('cache core utilities', () => {
@@ -240,6 +275,112 @@ describe('cache command handlers', () => {
       cacheDir,
       counts: { valid: 1 },
       totalEntries: 1,
+    });
+  });
+
+  it('includes a compact stats pointer in status when stats are nonzero', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      execCredential('2999-01-01T00:00:00Z'),
+    );
+    await writeStats(cacheDir);
+
+    await expect(runCacheStatus({ cacheDir }, { home: root })).resolves.toMatchObject({
+      cacheDir,
+      counts: { valid: 1 },
+      stats: {
+        hits: 38,
+        estimatedSavedMs: 252000,
+      },
+    });
+  });
+
+  it('omits the compact stats pointer when stats are empty', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      execCredential('2999-01-01T00:00:00Z'),
+    );
+    await writeStats(cacheDir, {
+      hits: 0,
+      misses: 0,
+      awsCalls: 0,
+      estimatedSavedMs: 0,
+      actualAwsMsTotal: 0,
+    });
+
+    await expect(runCacheStatus({ cacheDir }, { home: root })).resolves.not.toHaveProperty(
+      'stats',
+    );
+  });
+
+  it('prints a short stats pointer in human cache status output', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      execCredential('2999-01-01T00:00:00Z'),
+    );
+    await writeStats(cacheDir);
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ['--import', 'tsx', 'src/cli.ts', 'cache', 'status', '--cache-dir', cacheDir],
+      {
+        env: {
+          ...process.env,
+          HOME: root,
+        },
+      },
+    );
+
+    expect(stdout).toContain(
+      'Stats: 38 hits, about 4m 12s saved. Run `add-eks stats` for details.\n',
+    );
+  });
+
+  it('includes the compact stats pointer in json cache status output', async () => {
+    const root = await tempDir();
+    const cacheDir = path.join(root, 'cache');
+    await writeCacheFile(
+      cacheDir,
+      'cluster-region-profile-dev__us-west-2__team-123-45.json',
+      execCredential('2999-01-01T00:00:00Z'),
+    );
+    await writeStats(cacheDir);
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        'src/cli.ts',
+        'cache',
+        'status',
+        '--cache-dir',
+        cacheDir,
+        '--json',
+      ],
+      {
+        env: {
+          ...process.env,
+          HOME: root,
+        },
+      },
+    );
+
+    expect(JSON.parse(stdout)).toMatchObject({
+      cacheDir,
+      stats: {
+        hits: 38,
+        estimatedSavedMs: 252000,
+      },
     });
   });
 
