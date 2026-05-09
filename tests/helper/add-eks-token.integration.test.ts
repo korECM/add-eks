@@ -357,6 +357,33 @@ not-json
     expect(stats.recent).toHaveLength(1);
   });
 
+  it('claims stale stats lock directory before replacing it', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+    const lockDir = path.join(cacheDir, '.add-eks-stats.json.lock');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, 'created-at-ms'), '0\n', 'utf8');
+    await writeFile(path.join(lockDir, 'owner'), 'previous-owner\n', 'utf8');
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+    expect((await readdir(cacheDir)).some((entry) => entry.includes('.stale.'))).toBe(false);
+    expect((await readdir(cacheDir)).includes('.add-eks-stats.json.lock')).toBe(false);
+
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(1);
+    expect(stats.totals.awsCalls).toBe(1);
+    expect(stats.recent).toHaveLength(1);
+  });
+
   it('skips stats quickly when lock is missing metadata but fresh', async () => {
     const root = await tempDir();
     const binDir = path.join(root, 'bin');

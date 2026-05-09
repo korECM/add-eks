@@ -385,6 +385,12 @@ release_stats_lock() {
   rmdir "$stats_lock" 2>/dev/null
 }
 
+remove_claimed_stats_lock() {
+  claimed_lock=$1
+
+  rm -rf "$claimed_lock" 2>/dev/null
+}
+
 acquire_stats_lock() {
   if mkdir "$stats_lock" 2>/dev/null; then
     write_stats_lock_metadata "$stats_lock" || {
@@ -395,14 +401,16 @@ acquire_stats_lock() {
   fi
 
   if [ -d "$stats_lock" ] && stats_lock_is_stale "$stats_lock"; then
-    rm -f "$stats_lock/created-at-ms" 2>/dev/null
-    if rmdir "$stats_lock" 2>/dev/null && mkdir "$stats_lock" 2>/dev/null; then
+    claimed_lock=$stats_lock.stale.$$.$(current_millis)
+    if mv "$stats_lock" "$claimed_lock" 2>/dev/null && mkdir "$stats_lock" 2>/dev/null; then
+      remove_claimed_stats_lock "$claimed_lock"
       write_stats_lock_metadata "$stats_lock" || {
         release_stats_lock
         return 1
       }
       return 0
     fi
+    remove_claimed_stats_lock "$claimed_lock"
   fi
 
   debug 'stats update skipped: stats lock busy'
