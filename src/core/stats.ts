@@ -236,7 +236,7 @@ function topClusterByUsefulActivity(
 }
 
 async function moveBrokenStatsAside(statsPath: string): Promise<void> {
-  const brokenPath = `${statsPath}.broken.${Date.now()}`;
+  const brokenPath = `${statsPath}.broken`;
 
   try {
     await rename(statsPath, brokenPath);

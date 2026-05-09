@@ -339,6 +339,66 @@ stats_file_is_valid() {
   ' "$file" >/dev/null 2>&1
 }
 
+stats_lock_is_stale() {
+  lock_dir=$1
+  lock_meta=$lock_dir/created-at-ms
+
+  if [ ! -f "$lock_meta" ]; then
+    return 0
+  fi
+
+  lock_created=$(sed -n '1p' "$lock_meta" 2>/dev/null)
+  case "$lock_created" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+
+  now_ms=$(current_millis)
+  case "$now_ms" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+
+  [ $((now_ms - lock_created)) -ge 60000 ]
+}
+
+write_stats_lock_metadata() {
+  lock_dir=$1
+  lock_created=$(current_millis)
+
+  if ! printf '%s\n' "$lock_created" 2>/dev/null > "$lock_dir/created-at-ms"; then
+    debug 'stats update skipped: failed to write stats lock metadata'
+    return 1
+  fi
+}
+
+release_stats_lock() {
+  rm -f "$stats_lock/created-at-ms" 2>/dev/null
+  rmdir "$stats_lock" 2>/dev/null
+}
+
+acquire_stats_lock() {
+  if mkdir "$stats_lock" 2>/dev/null; then
+    write_stats_lock_metadata "$stats_lock" || {
+      release_stats_lock
+      return 1
+    }
+    return 0
+  fi
+
+  if [ -d "$stats_lock" ] && stats_lock_is_stale "$stats_lock"; then
+    rm -f "$stats_lock/created-at-ms" 2>/dev/null
+    if rmdir "$stats_lock" 2>/dev/null && mkdir "$stats_lock" 2>/dev/null; then
+      write_stats_lock_metadata "$stats_lock" || {
+        release_stats_lock
+        return 1
+      }
+      return 0
+    fi
+  fi
+
+  debug 'stats update skipped: stats lock busy'
+  return 1
+}
+
 record_stats() {
   stats_type=$1
   stats_actual_ms=${2:-0}
@@ -352,11 +412,10 @@ record_stats() {
     ''|*[!0-9]*) stats_actual_ms=0 ;;
   esac
 
-  if ! mkdir "$stats_lock" 2>/dev/null; then
-    debug 'stats update skipped: stats lock busy'
+  if ! acquire_stats_lock; then
     return 0
   fi
-  trap 'rm -f "$stats_tmp" 2>/dev/null; rmdir "$stats_lock" 2>/dev/null' HUP INT TERM EXIT
+  trap 'rm -f "$stats_tmp" 2>/dev/null; release_stats_lock' HUP INT TERM EXIT
 
   if [ -f "$stats_file" ]; then
     if stats_file_is_valid "$stats_file"; then
@@ -364,7 +423,7 @@ record_stats() {
     else
       if ! mv -f "$stats_file" "$stats_file.malformed" 2>/dev/null; then
         debug 'stats update skipped: failed to move malformed stats file aside'
-        rmdir "$stats_lock" 2>/dev/null
+        release_stats_lock
         trap - HUP INT TERM EXIT
         return 0
       fi
@@ -498,7 +557,7 @@ record_stats() {
   ' "$stats_input" 2>/dev/null > "$stats_tmp"; then
     debug 'stats update skipped: failed to write temporary stats file'
     rm -f "$stats_tmp" 2>/dev/null
-    rmdir "$stats_lock" 2>/dev/null
+    release_stats_lock
     trap - HUP INT TERM EXIT
     return 0
   fi
@@ -506,18 +565,18 @@ record_stats() {
   if ! chmod 600 "$stats_tmp" 2>/dev/null; then
     debug 'stats update skipped: failed to set stats file mode'
     rm -f "$stats_tmp" 2>/dev/null
-    rmdir "$stats_lock" 2>/dev/null
+    release_stats_lock
     trap - HUP INT TERM EXIT
     return 0
   fi
   if ! mv "$stats_tmp" "$stats_file" 2>/dev/null; then
     debug 'stats update skipped: failed to replace stats file'
     rm -f "$stats_tmp" 2>/dev/null
-    rmdir "$stats_lock" 2>/dev/null
+    release_stats_lock
     trap - HUP INT TERM EXIT
     return 0
   fi
-  rmdir "$stats_lock" 2>/dev/null
+  release_stats_lock
   trap - HUP INT TERM EXIT
 }
 

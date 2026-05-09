@@ -328,6 +328,83 @@ not-json
     expect(sidecars).toHaveLength(1);
   });
 
+  it('recovers stale stats lock and records stats', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+    await writeFile(
+      path.join(cacheDir, '.add-eks-stats.json.lock', 'created-at-ms'),
+      '0\n',
+      'utf8',
+    );
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+    expect((await readdir(cacheDir)).includes('.add-eks-stats.json.lock')).toBe(false);
+
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(1);
+    expect(stats.totals.awsCalls).toBe(1);
+    expect(stats.recent).toHaveLength(1);
+  });
+
+  it('recovers stats lock without metadata and records stats', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+    expect((await readdir(cacheDir)).includes('.add-eks-stats.json.lock')).toBe(false);
+
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(1);
+    expect(stats.totals.awsCalls).toBe(1);
+    expect(stats.recent).toHaveLength(1);
+  });
+
+  it('skips stats quickly when lock is fresh', async () => {
+    const root = await tempDir();
+    const binDir = path.join(root, 'bin');
+    const cacheDir = path.join(root, 'cache');
+    const callsPath = path.join(root, 'aws-calls');
+
+    await writeFakeAws({ binDir, callsPath });
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+    await writeFile(
+      path.join(cacheDir, '.add-eks-stats.json.lock', 'created-at-ms'),
+      `${Date.now()}\n`,
+      'utf8',
+    );
+
+    const result = await execFileAsync('/bin/sh', [helperPath.pathname, ...baseArgs(cacheDir)], {
+      env: testEnv({ binDir, callsPath, debug: false }),
+    });
+
+    expect(JSON.parse(result.stdout).status.token).toBe('token-1');
+    expect(result.stderr).toBe('');
+
+    const stats = await readStats(cacheDir);
+    expect(stats.totals.misses).toBe(0);
+    expect(stats.recent).toHaveLength(0);
+  });
+
   it('caps recent stats at 50 entries', async () => {
     const root = await tempDir();
     const binDir = path.join(root, 'bin');

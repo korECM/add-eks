@@ -95,9 +95,24 @@ describe('stats core utilities', () => {
     expect(stats.totals.hits).toBe(0);
     await expect(readFile(statsPath, 'utf8')).resolves.toContain('"schemaVersion"');
     const entries = await readdir(cacheDir);
-    expect(entries.some((entry) => entry.startsWith('.add-eks-stats.json.broken.'))).toBe(
-      true,
+    expect(entries).toContain('.add-eks-stats.json.broken');
+  });
+
+  it('bounds malformed stats sidecars across repeated reads', async () => {
+    const cacheDir = await tempDir();
+    await mkdir(cacheDir, { recursive: true });
+    const statsPath = statsPathForCacheDir(cacheDir);
+
+    for (let index = 0; index < 3; index += 1) {
+      await writeFile(statsPath, `{broken-${index}`, 'utf8');
+      await readStats(cacheDir);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+
+    const brokenEntries = (await readdir(cacheDir)).filter((entry) =>
+      entry.startsWith('.add-eks-stats.json.broken'),
     );
+    expect(brokenEntries).toEqual(['.add-eks-stats.json.broken']);
   });
 
   it('formats compact durations', () => {
