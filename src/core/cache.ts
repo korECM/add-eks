@@ -403,7 +403,19 @@ function safeName(value: string): string {
 }
 
 function isStatsSidecarName(name: string): boolean {
-  return STATS_SIDECAR_NAMES.has(name);
+  return (
+    STATS_SIDECAR_NAMES.has(name) ||
+    isStatsTempSidecarName(name) ||
+    name.startsWith(`${STATS_FILE_NAME}.lock.stale.`)
+  );
+}
+
+function isStatsTempSidecarName(name: string): boolean {
+  return (
+    (name.startsWith(`${STATS_FILE_NAME}.`) ||
+      name.startsWith(`.${STATS_FILE_NAME}.`)) &&
+    name.endsWith('.tmp')
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

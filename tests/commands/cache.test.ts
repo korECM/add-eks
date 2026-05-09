@@ -169,7 +169,11 @@ describe('cache core utilities', () => {
     await writeStats(cacheDir);
     await writeCacheFile(cacheDir, '.add-eks-stats.json.broken', '{broken');
     await writeCacheFile(cacheDir, '.add-eks-stats.json.malformed', 'not-json');
+    await writeCacheFile(cacheDir, '.add-eks-stats.json.12345.tmp', '{"partial":true}');
     await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock.stale.12345.171000'), {
+      recursive: true,
+    });
 
     const entries = await listCacheEntries(cacheDir);
     const status = await readCacheStatus(cacheDir);
@@ -224,7 +228,11 @@ describe('cache core utilities', () => {
     await writeStats(cacheDir);
     await writeCacheFile(cacheDir, '.add-eks-stats.json.broken', '{broken');
     await writeCacheFile(cacheDir, '.add-eks-stats.json.malformed', 'not-json');
+    await writeCacheFile(cacheDir, '.add-eks-stats.json.12345.tmp', '{"partial":true}');
     await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock'), { recursive: true });
+    await mkdir(path.join(cacheDir, '.add-eks-stats.json.lock.stale.12345.171000'), {
+      recursive: true,
+    });
 
     const result = await clearCacheEntries(cacheDir, {});
 
@@ -235,8 +243,10 @@ describe('cache core utilities', () => {
     });
     expect((await readdir(cacheDir)).sort()).toEqual([
       '.add-eks-stats.json',
+      '.add-eks-stats.json.12345.tmp',
       '.add-eks-stats.json.broken',
       '.add-eks-stats.json.lock',
+      '.add-eks-stats.json.lock.stale.12345.171000',
       '.add-eks-stats.json.malformed',
     ]);
   });
