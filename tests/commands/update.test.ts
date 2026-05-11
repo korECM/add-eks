@@ -114,6 +114,42 @@ describe('runUpdate', () => {
     expect(config.users?.find((entry) => entry.name === 'local-user')?.user?.exec).toBeUndefined();
   });
 
+  it('patches the current kube context with --current', async () => {
+    const root = await tempDir();
+    const kubeconfig = await writeFixture(root);
+
+    const result = await runUpdate(
+      {
+        kubeconfig,
+        current: true,
+        profile: 'prod',
+        helperPath: path.join(root, 'helper'),
+        cacheDir: path.join(root, 'cache'),
+        backupDir: path.join(root, 'backups'),
+        yes: true,
+      },
+      { home: root, installHelper: vi.fn<() => Promise<void>>().mockResolvedValue(undefined) },
+    );
+
+    const config = parseKubeconfig(await readFile(kubeconfig, 'utf8'));
+
+    expect(result.changedContexts).toEqual(['prod']);
+    expect(config.users?.find((entry) => entry.name === 'prod-user')?.user?.exec).toBeDefined();
+    expect(config.users?.find((entry) => entry.name === 'stage-user')?.user?.exec).toBeUndefined();
+  });
+
+  it('does not allow --current with --context or --all', async () => {
+    const root = await tempDir();
+    const kubeconfig = await writeFixture(root);
+
+    await expect(runUpdate({ kubeconfig, current: true, context: ['prod'], dryRun: true })).rejects.toThrow(
+      'Use only one of --current, --all, or --context',
+    );
+    await expect(runUpdate({ kubeconfig, current: true, all: true, dryRun: true })).rejects.toThrow(
+      'Use only one of --current, --all, or --context',
+    );
+  });
+
   it('creates a backup by default before writing', async () => {
     const root = await tempDir();
     const kubeconfig = await writeFixture(root);

@@ -207,6 +207,21 @@ describe('runInteractive', () => {
         message: expect.stringContaining('patch for cached tokens'),
       }),
     );
+    expect(prompts.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('Plan:'),
+      }),
+    );
+    expect(prompts.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('Patch contexts: prod'),
+      }),
+    );
+    expect(prompts.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('AWS identity: profile prod'),
+      }),
+    );
   });
 
   it('can use current shell AWS credentials instead of a named profile', async () => {

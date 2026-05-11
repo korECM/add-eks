@@ -106,6 +106,7 @@ program
   .description('Patch EKS kubeconfig contexts to use the add-eks token helper.')
   .option('--kubeconfig <path>', 'kubeconfig file to update')
   .option('--context <name>', 'context to update; can be repeated or comma-separated', collect, [])
+  .option('--current', 'update the current kube context')
   .option('--all', 'update all detected EKS contexts')
   .option('--profile <name>', 'AWS profile to pass to the helper')
   .option('--helper-path <path>', 'path where the helper should be installed')

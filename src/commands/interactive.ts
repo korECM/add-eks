@@ -110,7 +110,18 @@ export async function runInteractive(
     required: true,
   });
 
-  const applyMode = await promptForApplyMode(prompts, options.dryRun === true);
+  const applyMode = await promptForApplyMode(
+    prompts,
+    options.dryRun === true,
+    formatApplyPlan({
+      home,
+      contexts: selectedContexts,
+      profile,
+      helperPath: options.helperPath,
+      cacheDir: options.cacheDir,
+      backup: options.backup,
+    }),
+  );
   const updateOptions: UpdateOptions = {
     kubeconfig: kubeconfigPath,
     context: selectedContexts,
@@ -195,17 +206,47 @@ async function promptForProfile(
 async function promptForApplyMode(
   prompts: InteractivePromptFunctions,
   dryRunRequested: boolean,
+  applyPlan: string,
 ): Promise<ApplyMode> {
   if (dryRunRequested) {
     return 'dry-run';
   }
 
   const apply = await prompts.confirm({
-    message: 'Apply these kubeconfig changes? A backup is created first unless backup is disabled.',
+    message: `${applyPlan}\n\nApply these kubeconfig changes?`,
     default: false,
   });
 
   return apply ? 'apply' : 'dry-run';
+}
+
+function formatApplyPlan(input: {
+  home: string;
+  contexts: string[];
+  profile: string | undefined;
+  helperPath: string | undefined;
+  cacheDir: string | undefined;
+  backup: boolean | undefined;
+}): string {
+  const paths = defaultPaths(input.home);
+  const helperPath = path.resolve(
+    resolveHomePath(input.helperPath ?? paths.helperPath, input.home),
+  );
+  const cacheDir = path.resolve(
+    resolveHomePath(input.cacheDir ?? paths.cacheDir, input.home),
+  );
+  const awsIdentity =
+    input.profile === undefined ? 'current shell AWS credentials' : `profile ${input.profile}`;
+  const backup = input.backup === false ? 'disabled' : 'enabled';
+
+  return [
+    'Plan:',
+    `  Patch contexts: ${input.contexts.join(', ')}`,
+    `  AWS identity: ${awsIdentity}`,
+    `  Helper: ${helperPath}`,
+    `  Cache: ${cacheDir}`,
+    `  Backup: ${backup}`,
+  ].join('\n');
 }
 
 function findSelectableEksContexts(config: Parameters<typeof findEksContexts>[0]): EksContextDetection[] {

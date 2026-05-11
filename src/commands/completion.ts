@@ -48,6 +48,7 @@ const GLOBAL_FLAGS = ['--help', '--version'];
 const UPDATE_FLAGS = [
   '--kubeconfig',
   '--context',
+  '--current',
   '--all',
   '--profile',
   '--helper-path',

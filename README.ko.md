@@ -31,6 +31,7 @@ add-eks doctor
 
 ```sh
 npx @eatingcookieman/add-eks update --context prod --profile prod --yes
+npx @eatingcookieman/add-eks update --current --profile prod --yes
 npx @eatingcookieman/add-eks update --all --profile prod --yes
 ```
 
@@ -71,6 +72,7 @@ helper는 토큰 응답을 아래 디렉터리에 저장합니다.
 ```sh
 add-eks
 add-eks update --context prod --profile prod --yes
+add-eks update --current --profile prod --yes
 add-eks update --all --profile prod --yes
 add-eks update --context prod --profile prod --dry-run
 
@@ -97,6 +99,12 @@ context 하나만 패치:
 add-eks update --context prod --profile prod --yes
 ```
 
+현재 kube context 패치:
+
+```sh
+add-eks update --current --profile prod --yes
+```
+
 감지된 모든 EKS context 패치:
 
 ```sh
@@ -110,6 +118,8 @@ add-eks update --context prod --profile prod --dry-run
 ```
 
 `add-eks`는 가능한 한 기존 context 이름, cluster endpoint, certificate authority data, 관련 없는 kubeconfig 필드를 보존합니다.
+
+interactive 설정은 AWS identity와 패치할 EKS context만 묻고, 쓰기 전 짧은 plan을 보여줍니다.
 
 ## Backup과 Revert
 

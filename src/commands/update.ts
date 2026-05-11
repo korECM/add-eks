@@ -18,6 +18,7 @@ export interface UpdateOptions extends RuntimeOptionFlags {
   kubeconfig?: string;
   context?: string | string[];
   all?: boolean;
+  current?: boolean;
   profile?: string;
   region?: string;
   backup?: boolean;
@@ -129,9 +130,20 @@ function resolvePath(value: string, home: string): string {
 function selectContexts(config: Kubeconfig, options: UpdateOptions): string[] {
   const requestedContexts = parseContextFlags(options.context);
   const hasContextSelection = requestedContexts.length > 0;
+  const selectionCount = [options.current === true, options.all === true, hasContextSelection]
+    .filter(Boolean).length;
 
-  if (options.all === true && hasContextSelection) {
-    throw new Error('Use either --all or --context, not both');
+  if (selectionCount > 1) {
+    throw new Error('Use only one of --current, --all, or --context');
+  }
+
+  if (options.current === true) {
+    const currentContext = config['current-context'];
+    if (currentContext === undefined || currentContext.trim() === '') {
+      throw new Error('No current context is set in kubeconfig');
+    }
+
+    return [currentContext];
   }
 
   if (options.all === true) {
@@ -147,7 +159,7 @@ function selectContexts(config: Kubeconfig, options: UpdateOptions): string[] {
   }
 
   if (!hasContextSelection) {
-    throw new Error('Select contexts with --context or --all');
+    throw new Error('Select contexts with --context, --current, or --all');
   }
 
   const knownContexts = new Set((config.contexts ?? []).map((entry) => entry.name));

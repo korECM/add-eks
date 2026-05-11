@@ -91,6 +91,7 @@ describe('generateCompletionScript', () => {
     expect(script).toContain('__complete clusters');
     expect(script).toContain('--profile');
     expect(script).toContain('--context');
+    expect(script).toContain('--current');
     expect(script).toContain('cache list status clear');
     expect(script).toContain('stats clear');
     expect(script).toContain('doctor');

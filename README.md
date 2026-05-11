@@ -31,6 +31,7 @@ For non-interactive use:
 
 ```sh
 npx @eatingcookieman/add-eks update --context prod --profile prod --yes
+npx @eatingcookieman/add-eks update --current --profile prod --yes
 npx @eatingcookieman/add-eks update --all --profile prod --yes
 ```
 
@@ -71,6 +72,7 @@ This means you can use Node.js only for setup and still keep `kubectl` working l
 ```sh
 add-eks
 add-eks update --context prod --profile prod --yes
+add-eks update --current --profile prod --yes
 add-eks update --all --profile prod --yes
 add-eks update --context prod --profile prod --dry-run
 
@@ -97,6 +99,12 @@ Patch one context:
 add-eks update --context prod --profile prod --yes
 ```
 
+Patch the current kube context:
+
+```sh
+add-eks update --current --profile prod --yes
+```
+
 Patch every detected EKS context:
 
 ```sh
@@ -110,6 +118,8 @@ add-eks update --context prod --profile prod --dry-run
 ```
 
 `add-eks` preserves your existing context names, cluster endpoints, certificate authority data, and unrelated kubeconfig fields where possible.
+
+Interactive setup asks only for the AWS identity and EKS contexts to patch, then shows a short plan before writing.
 
 ## Backup and Revert
 
