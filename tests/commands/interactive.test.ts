@@ -57,8 +57,7 @@ describe('runInteractive', () => {
     const prompts = {
       select: vi
         .fn()
-        .mockResolvedValueOnce('prod')
-        .mockResolvedValueOnce('ap-northeast-2'),
+        .mockResolvedValueOnce('prod'),
       checkbox: vi.fn().mockResolvedValueOnce(['prod']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(true),
@@ -79,7 +78,6 @@ describe('runInteractive', () => {
         kubeconfig,
         context: ['prod'],
         profile: 'prod',
-        region: 'ap-northeast-2',
         yes: true,
       }),
     );
@@ -100,8 +98,7 @@ describe('runInteractive', () => {
     const prompts = {
       select: vi
         .fn()
-        .mockResolvedValueOnce('default')
-        .mockResolvedValueOnce('us-west-2'),
+        .mockResolvedValueOnce('default'),
       checkbox: vi.fn().mockResolvedValueOnce(['stage']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(false),
@@ -122,13 +119,12 @@ describe('runInteractive', () => {
         kubeconfig,
         context: ['stage'],
         profile: 'default',
-        region: 'us-west-2',
         dryRun: true,
       }),
     );
   });
 
-  it('offers only detected kubeconfig regions for update-existing', async () => {
+  it('offers all detected EKS contexts without asking for region first', async () => {
     const root = await tempDir();
     const kubeconfig = path.join(root, 'config');
     await writeFile(kubeconfig, fixture(), 'utf8');
@@ -136,9 +132,8 @@ describe('runInteractive', () => {
     const prompts = {
       select: vi
         .fn()
-        .mockResolvedValueOnce('prod')
-        .mockResolvedValueOnce('ap-northeast-2'),
-      checkbox: vi.fn().mockResolvedValueOnce(['prod']),
+        .mockResolvedValueOnce('prod'),
+      checkbox: vi.fn().mockResolvedValueOnce(['prod', 'stage']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(false),
     };
@@ -159,19 +154,20 @@ describe('runInteractive', () => {
       },
     );
 
-    expect(prompts.select).toHaveBeenNthCalledWith(
-      2,
+    expect(prompts.select).toHaveBeenCalledTimes(1);
+    expect(prompts.checkbox).toHaveBeenCalledWith(
       expect.objectContaining({
-        choices: [
-          { name: 'ap-northeast-2', value: 'ap-northeast-2' },
-          { name: 'us-west-2', value: 'us-west-2' },
-        ],
+        message: expect.stringContaining('Which EKS contexts'),
+        choices: expect.arrayContaining([
+          expect.objectContaining({ value: 'prod' }),
+          expect.objectContaining({ value: 'stage' }),
+        ]),
       }),
     );
     expect(prompts.input).not.toHaveBeenCalled();
   });
 
-  it('goes directly from region selection to context selection', async () => {
+  it('explains why interactive prompts ask for AWS identity and contexts', async () => {
     const root = await tempDir();
     const kubeconfig = path.join(root, 'config');
     await writeFile(kubeconfig, fixture(), 'utf8');
@@ -179,8 +175,7 @@ describe('runInteractive', () => {
     const prompts = {
       select: vi
         .fn()
-        .mockResolvedValueOnce('prod')
-        .mockResolvedValueOnce('ap-northeast-2'),
+        .mockResolvedValueOnce('prod'),
       checkbox: vi.fn().mockResolvedValueOnce(['prod']),
       input: vi.fn(),
       confirm: vi.fn().mockResolvedValueOnce(false),
@@ -202,12 +197,51 @@ describe('runInteractive', () => {
       },
     );
 
-    expect(prompts.select).toHaveBeenCalledTimes(2);
-    expect(prompts.select).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Choose action' }),
+    expect(prompts.select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('kubectl token refresh'),
+      }),
     );
     expect(prompts.checkbox).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Select EKS contexts to update' }),
+      expect.objectContaining({
+        message: expect.stringContaining('patch for cached tokens'),
+      }),
+    );
+  });
+
+  it('can use current shell AWS credentials instead of a named profile', async () => {
+    const root = await tempDir();
+    const kubeconfig = path.join(root, 'config');
+    await writeFile(kubeconfig, fixture(), 'utf8');
+
+    const runUpdate = vi.fn(async () => ({
+      kubeconfigPath: kubeconfig,
+      changedContexts: ['prod'],
+      dryRun: true,
+      installedHelper: false,
+      wroteKubeconfig: false,
+    }));
+    const prompts = {
+      select: vi.fn().mockResolvedValueOnce('__current__'),
+      checkbox: vi.fn().mockResolvedValueOnce(['prod']),
+      input: vi.fn(),
+      confirm: vi.fn().mockResolvedValueOnce(false),
+    };
+
+    await runInteractive(
+      { kubeconfig },
+      {
+        home: root,
+        prompts,
+        discoverProfiles: async () => ['prod'],
+        runUpdate,
+      },
+    );
+
+    expect(runUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: undefined,
+      }),
     );
   });
 });

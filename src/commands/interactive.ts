@@ -14,6 +14,7 @@ import { runUpdate } from './update.js';
 import type { UpdateOptions, UpdateResult } from './update.js';
 
 type ApplyMode = 'apply' | 'dry-run';
+const CURRENT_AWS_CREDENTIALS = '__current__';
 
 export interface InteractiveOptions extends RuntimeOptionFlags {
   kubeconfig?: string;
@@ -98,15 +99,10 @@ export async function runInteractive(
     throw new Error('No detectable EKS contexts found in kubeconfig');
   }
 
-  const region = await promptForRegion(prompts, detections);
-  const selectableContexts = detections.filter((detection) => detection.region === region);
-  if (selectableContexts.length === 0) {
-    throw new Error(`No detectable EKS contexts found for region '${region}'`);
-  }
-
   const selectedContexts = await prompts.checkbox<string>({
-    message: 'Select EKS contexts to update',
-    choices: selectableContexts.map((detection) => ({
+    message:
+      'Which EKS contexts should add-eks patch for cached tokens? Only selected contexts will use the helper.',
+    choices: detections.map((detection) => ({
       name: formatContextChoice(detection),
       value: detection.contextName,
       checked: true,
@@ -119,7 +115,6 @@ export async function runInteractive(
     kubeconfig: kubeconfigPath,
     context: selectedContexts,
     profile,
-    region,
     helperPath: options.helperPath,
     cacheDir: options.cacheDir,
     backupDir: options.backupDir,
@@ -171,35 +166,30 @@ const defaultPrompts: InteractivePromptFunctions = {
 async function promptForProfile(
   prompts: InteractivePromptFunctions,
   profiles: string[],
-): Promise<string> {
+): Promise<string | undefined> {
   if (profiles.length === 0) {
-    return prompts.input({
-      message: 'AWS profile',
-      default: 'default',
-      required: true,
-      validate: (value) => value.trim() !== '' || 'Enter an AWS profile',
-    });
+    return undefined;
   }
 
-  return prompts.select<string>({
-    message: 'Choose AWS profile',
-    choices: profiles.map((profile) => ({ name: profile, value: profile })),
-    default: profiles.includes('default') ? 'default' : profiles[0],
+  const selected = await prompts.select<string>({
+    message:
+      'Which AWS identity should kubectl token refresh use? Choose a profile or use the current shell credentials.',
+    choices: [
+      {
+        name: 'Use current shell AWS credentials',
+        value: CURRENT_AWS_CREDENTIALS,
+        description: 'Uses AWS_PROFILE, SSO/session env vars, or the default AWS credential chain at runtime.',
+      },
+      ...profiles.map((profile) => ({
+        name: profile,
+        value: profile,
+        description: `Passes --profile ${profile} to aws eks get-token at runtime.`,
+      })),
+    ],
+    default: profiles.includes('default') ? 'default' : CURRENT_AWS_CREDENTIALS,
   });
-}
 
-async function promptForRegion(
-  prompts: InteractivePromptFunctions,
-  detections: EksContextDetection[],
-): Promise<string> {
-  const regions = [...new Set(detections.map((detection) => detection.region))]
-    .filter((region): region is string => region !== undefined)
-    .sort();
-  return prompts.select<string>({
-    message: 'Choose AWS region',
-    choices: regions.map((region) => ({ name: region, value: region })),
-    default: regions[0],
-  });
+  return selected === CURRENT_AWS_CREDENTIALS ? undefined : selected;
 }
 
 async function promptForApplyMode(
@@ -211,7 +201,7 @@ async function promptForApplyMode(
   }
 
   const apply = await prompts.confirm({
-    message: 'Apply changes to kubeconfig?',
+    message: 'Apply these kubeconfig changes? A backup is created first unless backup is disabled.',
     default: false,
   });
 
